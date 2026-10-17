@@ -1,0 +1,709 @@
+//
+//  WebViewController.swift
+//  WebBridgeKit
+//
+//  Created by Claude on 2025-01-14.
+//
+
+import UIKit
+import WebKit
+import RealmSwift
+
+/// 统一的 Web 容器，支持横竖屏控制、全屏控制与 JSBridge
+@MainActor
+public class WebViewController: UIViewController, UINavigationControllerDelegate, WKScriptMessageHandler, WKNavigationDelegate {
+
+    // MARK: - Properties
+
+    public var webView: WKWebView!
+    public var bridge: WebJavaScriptBridge!
+    public var gestureInterceptor: WebGestureInterceptor?
+
+    /// 当前加载的 URL
+    public var url: URL?
+
+
+    /// 标记是否从池中获取的实例（用于性能优化）
+    private var isPooledInstance = false
+
+    /// KVO observer for webView.isLoading property (for thumbnail generation)
+    private var loadingObserver: NSKeyValueObservation?
+
+    /// Track all registered script message handler names for proper cleanup
+    var registeredHandlerNames: [String] = []
+
+    /// 是否隐藏状态栏
+    public var isStatusBarHidden: Bool = false {
+        didSet {
+            setNeedsStatusBarAppearanceUpdate()
+        }
+    }
+
+    /// 支持的方向
+    public var supportedOrientations: UIInterfaceOrientationMask = .all {
+        didSet {
+            if #available(iOS 16.0, *) {
+                setNeedsUpdateOfSupportedInterfaceOrientations()
+            }
+        }
+    }
+
+    /// 浏览器配置
+    public var browserConfig: WebBrowserParams?
+
+    /// 右上角 ⋯ 更多菜单入口：收藏等页面操作收进底部弹出菜单，不直露星标。
+    /// immersive 模式下由 updateImmersiveChrome() 置空隐藏（沉浸式有自己的 ⋯ 控件）。
+    lazy var moreButton: UIBarButtonItem = {
+        let button = UIBarButtonItem(
+            image: LucideIcon.ellipsis.templateImage(pointSize: 20, weight: .semibold),
+            style: .plain,
+            target: self,
+            action: #selector(showMoreMenuTapped)
+        )
+        button.accessibilityIdentifier = "browser.moreButton"
+        button.accessibilityLabel = "更多菜单"
+        return button
+    }()
+
+    private let immersiveExitControl = ImmersivePWAExitControl()
+    private var managedHTMLAppID: String?
+    private var managedHTMLAppDocumentURL: URL?
+
+    private let immersiveSettingsButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(LucideIcon.ellipsis.templateImage(pointSize: 20, weight: .semibold), for: .normal)
+        button.tintColor = ThemeTokens.Color.text
+        button.backgroundColor = ThemeTokens.Color.surfaceElevated
+        button.layer.cornerRadius = ThemeTokens.CornerRadius.full
+        button.layer.borderWidth = 1
+        button.layer.borderColor = ThemeTokens.Color.border.cgColor
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = Float(ThemeTokens.Shadows.sm.opacity)
+        button.layer.shadowRadius = ThemeTokens.Shadows.sm.radius
+        button.layer.shadowOffset = CGSize(
+            width: ThemeTokens.Shadows.sm.offsetX,
+            height: ThemeTokens.Shadows.sm.offsetY
+        )
+        button.accessibilityIdentifier = "browserManager.immersiveMenuButton"
+        button.accessibilityLabel = "应用设置"
+        button.isHidden = true
+        return button
+    }()
+
+    //  浏览器特性控制（默认全部禁用，通过 Bridge 按需开启）
+    var bouncesEnabled = false
+    var scrollIndicatorEnabled = false
+    var backForwardGesturesEnabled = false
+
+    // MARK: - Constants
+
+    let customScheme = "custom"
+
+    // MARK: - Lifecycle
+
+    public override func viewDidLoad() {
+        super.viewDidLoad()
+
+        // The Store build must never receive a pre-warmed bridged web view.
+        if DrelContainerBuildPolicy.nativeBridgeEnabled,
+           let instance = WebViewPool.shared.acquire() {
+            // 使用池中的实例
+            self.webView = instance.webView
+            self.bridge = instance.bridge
+            self.isPooledInstance = true
+
+            // 添加到视图
+            view.addSubview(webView)
+            webView.snp.makeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+
+            // 为当前 ViewController 添加 message handler (使用 weak wrapper 防止循环引用)
+            // 注意：脚已在预热时注入，但 message handler 需要每个 VC 单独添加
+            let weakHandler1 = WeakScriptMessageHandler(target: self)
+            webView.configuration.userContentController.add(weakHandler1, name: "barkBridge")
+            registeredHandlerNames.append("barkBridge")
+
+            let weakHandler2 = WeakScriptMessageHandler(target: self)
+            webView.configuration.userContentController.add(weakHandler2, name: "BarkBridge")
+            registeredHandlerNames.append("BarkBridge")
+
+            let weakHandler3 = WeakScriptMessageHandler(target: self)
+            webView.configuration.userContentController.add(weakHandler3, name: "WebBridgeKit")
+            registeredHandlerNames.append("WebBridgeKit")
+
+            // 更新 bridge 的 webView 引用
+            bridge.setWebView(webView)
+
+            // 设置导航代理
+            webView.navigationDelegate = self
+
+            // 设置手势拦截器
+            setupGestureInterceptor()
+
+            StructuredLogger.shared.debug("Using pooled WebView instance", category: .lifecycle)
+        } else {
+            setupUI()
+            setupBridge()
+            StructuredLogger.shared.debug("Created new WebView instance", category: .lifecycle)
+        }
+
+        setupNotifications()
+
+        // 默认禁用所有浏览器特性
+        applyBrowserFeatures()
+
+        // Cache inspection and clearing are framework-debug tools. Drel's
+        // Store build uses ordinary web caching transparently, but must not
+        // present it as an offline-download or user-facing web-app feature.
+        #if !DREL_CONTAINER_ONLY
+        setupCacheDebugButton()
+        #endif
+        setupImmersiveReturnButton()
+        updateImmersiveChrome()
+    }
+
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        updateImmersiveChrome()
+
+        //  在 viewWillAppear 中再次确保侧滑手势被禁用
+        if let config = browserConfig, config.disableSwipeBack {
+            navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+        }
+
+        //  强制横屏：在 viewWillAppear 时再次强制旋转到目标方向
+        if let config = browserConfig {
+            if config.orientation == .landscapeLeft {
+                rotateTo(.landscapeLeft)
+                StructuredLogger.shared.debug("viewWillAppear - Forcing landscapeLeft orientation", category: .ui)
+            } else if config.orientation == .landscapeRight {
+                rotateTo(.landscapeRight)
+                StructuredLogger.shared.debug("viewWillAppear - Forcing landscapeRight orientation", category: .ui)
+            } else if config.orientation == .landscape {
+                rotateTo(.landscapeLeft)
+                StructuredLogger.shared.debug("viewWillAppear - Forcing landscape (left) orientation", category: .ui)
+            } else if config.orientation == .portrait {
+                rotateTo(.portrait)
+                StructuredLogger.shared.debug("viewWillAppear - Forcing portrait orientation", category: .ui)
+            }
+        }
+    }
+
+    public override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        //  强制横屏：在 viewDidAppear 时最后确认一次方向（防止用户快速旋转设备）
+        if let config = browserConfig {
+            if config.orientation == .landscapeLeft {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.rotateTo(.landscapeLeft)
+                    StructuredLogger.shared.debug("viewDidAppear - Final forcing landscapeLeft orientation", category: .ui)
+                }
+            } else if config.orientation == .landscapeRight {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.rotateTo(.landscapeRight)
+                    StructuredLogger.shared.debug("viewDidAppear - Final forcing landscapeRight orientation", category: .ui)
+                }
+            } else if config.orientation == .landscape {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.rotateTo(.landscapeLeft)
+                    StructuredLogger.shared.debug("viewDidAppear - Final forcing landscape (left) orientation", category: .ui)
+                }
+            } else if config.orientation == .portrait {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.rotateTo(.portrait)
+                    StructuredLogger.shared.debug("viewDidAppear - Final forcing portrait orientation", category: .ui)
+                }
+            }
+        }
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // 与 WebBrowserViewController 同款：浏览器页面真正离屏（pop/dismiss）
+        // = 用户结束浏览，清除会话恢复记录，避免冷启动复活已主动关闭的页面。
+        if isBeingDismissed || isMovingFromParent {
+            WebBrowserManager.shared.clearLastSession()
+        }
+    }
+
+    public override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        immersiveExitControl.updateLayout(in: view)
+    }
+
+    // MARK: - Public Methods
+
+    /// 安全地加载本地 HTML 文件
+    /// - Parameter htmlName: HTML 文件名（不含扩展名）
+    public func loadLocalHTML(named htmlName: String) {
+        // 确保 view 已加载，从而 webView 已初始化
+        _ = view
+
+        //  Input validation: Validate HTML name to prevent path traversal attacks
+        do {
+            _ = try InputValidator.validateHTMLName(htmlName)
+        } catch {
+            StructuredLogger.shared.error("Invalid HTML name: \(htmlName) - \(error.localizedDescription)", category: .ui)
+            return
+        }
+
+        if let htmlPath = Bundle.main.path(forResource: htmlName, ofType: "html") {
+            let htmlURL = URL(fileURLWithPath: htmlPath)
+            webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
+            StructuredLogger.shared.debug("Loaded HTML: \(htmlName).html", category: .ui)
+        } else {
+            StructuredLogger.shared.error("HTML file not found: \(htmlName).html", category: .ui)
+        }
+    }
+
+    /// 安全地加载 URL
+    /// - Parameter url: 要加载的 URL
+    public func loadURL(_ url: URL) {
+        // 确保 view 已加载
+        _ = view
+
+        //  Input validation: Validate URL scheme to prevent loading dangerous URLs
+        let allowedSchemes: Set<String> = ["http", "https", "file", "custom"]
+        do {
+            _ = try InputValidator.validateURLScheme(url, allowedSchemes: allowedSchemes)
+        } catch {
+            Log.error("Invalid URL scheme blocked: \(url.absoluteString) - \(error.localizedDescription)", category: .general)
+            StructuredLogger.shared.error("Invalid URL scheme: \(url.absoluteString) - \(error.localizedDescription)", category: .ui)
+            return
+        }
+
+        let blockedSchemes: Set<String> = ["javascript", "data", "vbscript", "file"]
+        if let scheme = url.scheme?.lowercased(), blockedSchemes.contains(scheme) {
+            Log.error("Blocked dangerous URL scheme: \(scheme) - \(url.absoluteString)", category: .general)
+            StructuredLogger.shared.error("Blocked dangerous URL scheme: \(scheme)", category: .ui)
+            return
+        }
+
+        self.url = url
+
+        StructuredLogger.shared.debug("Attempting to match URL: \(url.absoluteString)", category: .cache)
+
+        if let matchResult = URLRuleMatcher.shared.match(url: url) {
+            StructuredLogger.shared.info("Rule matched - Rule ID: \(matchResult.ruleId), Match Type: \(matchResult.matchType), Manifest URL: \(matchResult.manifestURL.absoluteString)", category: .cache)
+
+            downloadAndUseManifest(from: matchResult.manifestURL, pageURL: url)
+        } else {
+            StructuredLogger.shared.debug("No cache rule matched, using normal load", category: .cache)
+
+            if url.isFileURL {
+                webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            } else {
+                webView.load(URLRequest(url: url))
+            }
+            StructuredLogger.shared.debug("Loading: \(url) (System URLCache)", category: .navigation)
+
+            //  页面加载完成后自动生成缩略图
+            generateThumbnailAfterLoad(url: url)
+        }
+    }
+
+    /// 页面加载完成后生成缩略图
+    func generateThumbnailAfterLoad(url: URL) {
+        //  Clean up any existing observer before creating a new one
+        loadingObserver?.invalidate()
+        loadingObserver = nil
+
+        // 使用KVO监听loading属性
+        let observation = webView.observe(\.isLoading, options: [.new]) { [weak self] _, change in
+            guard let self = self, let isLoading = change.newValue else { return }
+
+            // 当loading变为false时，页面加载完成
+            if !isLoading {
+                // 延迟2秒等待页面渲染完成
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    self?.captureThumbnail(for: url)
+                    //  Clean up observer after use
+                    self?.loadingObserver?.invalidate()
+                    self?.loadingObserver = nil
+                }
+            }
+        }
+
+        // 保存观察者以便后续清理
+        loadingObserver = observation
+    }
+
+    /// 捕获缩略图并保存
+    private func captureThumbnail(for url: URL) {
+        // 只为外部URL生成缩略图
+        guard url.scheme == "http" || url.scheme == "https" else {
+            return
+        }
+
+        WebPageThumbnailGenerator.shared.generateThumbnail(for: webView, url: url) { thumbnailData in
+            Task {
+                guard let thumbnailData else {
+                    return
+                }
+
+                if let history = try? await WebPageHistoryManager.shared.findHistory(url: url) {
+                    await MainActor.run {
+                        do {
+                            let realm = try Realm(configuration: WebPageHistoryManager.shared.realmConfiguration)
+                            try realm.write {
+                                if let cachedHistory = realm.object(ofType: WebPageHistory.self, forPrimaryKey: history.id) {
+                                    cachedHistory.thumbnail = thumbnailData
+                                }
+                            }
+                        } catch {
+                            StructuredLogger.shared.error("Failed to save thumbnail for: \(url)", category: .storage)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 安全地加载 URL（强制使用在线版本）
+    /// - Parameter url: 要加载的 URL
+    public func loadURLOnline(_ url: URL) {
+        loadURL(url, preferCachedContent: false)
+    }
+
+    /// Loads a standard PWA with a deterministic startup policy.
+    /// Cache-first is used only for partial-offline apps; network-only callers
+    /// retain the normal protocol cache behavior.
+    public func loadURL(_ url: URL, preferCachedContent: Bool) {
+        // 确保 view 已加载
+        _ = view
+        self.url = url
+        if url.isFileURL {
+            // `WKWebView.load(URLRequest(fileURL:))` is not equivalent to the
+            // file-document API and can fail after connectivity disappears.
+            // Keep query parameters on the document URL (Drel route/context),
+            // but grant read access using a query-free filesystem directory so
+            // relative CSS, JS and image resources remain available offline.
+            let readAccessURL = URL(fileURLWithPath: url.path, isDirectory: false)
+                .deletingLastPathComponent()
+            webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)
+            StructuredLogger.shared.debug(
+                "Loading verified local HTML app from: \(url.path)",
+                category: .navigation
+            )
+            return
+        }
+        let policy: URLRequest.CachePolicy = preferCachedContent
+            ? .returnCacheDataElseLoad
+            : .useProtocolCachePolicy
+        webView.load(URLRequest(url: url, cachePolicy: policy, timeoutInterval: 30))
+        StructuredLogger.shared.debug(
+            "Loading standard PWA with cache policy \(policy.rawValue): \(url)",
+            category: .navigation
+        )
+    }
+
+    /// 配置浏览器参数
+    public func configure(with params: WebBrowserParams) {
+        browserConfig = params
+        webView.configuration.userContentController.addUserScript(WKUserScript(
+            source: DrelWebRuntimeContract.presentationScript(for: params.displayMode),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        let managedAppID = params.payload?["webbridgekitAppId"]
+        let managedPageURL = params.payload?["webbridgekitPageURL"].flatMap(URL.init(string:))
+        managedHTMLAppID = managedAppID
+        managedHTMLAppDocumentURL = managedPageURL
+        bridge.configureManagedHTMLApp(appID: managedAppID, documentURL: managedPageURL)
+        supportedOrientations = params.orientation
+        isStatusBarHidden = params.hideStatusBar
+
+        //  处理标题
+        if let title = params.customTitle {
+            self.title = title
+        }
+
+        updateImmersiveChrome()
+
+        //  TabBar 隐藏由系统的 hidesBottomBarWhenPushed 属性自动处理
+        // 当 hideTabBar = true 时，系统会在 push 时自动隐藏 TabBar
+        // 在 WebBrowserManager 创建 VC 时已设置 hidesBottomBarWhenPushed
+
+        //  禁用侧滑返回手势
+        if params.disableSwipeBack {
+            self.navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+            //  同时设置 delegate 以防止被重新启用
+            self.navigationController?.delegate = self
+        } else {
+            self.navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+            self.navigationController?.delegate = nil
+        }
+
+        //  沉浸式模式：移除安全区域
+        if params.displayMode == .immersive {
+            webView.scrollView.contentInsetAdjustmentBehavior = .never
+        } else {
+            webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        }
+
+        // 根据显示模式调整体验
+        configureBrowserFeatures(params: params)
+
+        //  注入 payload 参数
+        if let payload = params.payload {
+            if JSONSerialization.isValidJSONObject(payload),
+               let payloadData = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+               let payloadString = String(data: payloadData, encoding: .utf8) {
+                let scriptSource = """
+                (() => {
+                  const payload = \(payloadString);
+                  window.SuperCachePayload = payload;
+                  window.WebBridgeKitLaunchContext = payload;
+                  document.addEventListener('DOMContentLoaded', () => {
+                    window.dispatchEvent(new CustomEvent('webbridgekit:launch', { detail: payload }));
+                  }, { once: true });
+                })();
+                """
+                let userScript = WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+                webView.configuration.userContentController.addUserScript(userScript)
+                StructuredLogger.shared.debug("Injected PWA launch context", category: .bridge)
+            }
+
+        }
+
+        //  主动触发屏幕旋转
+        if params.orientation == .landscapeLeft {
+            rotateTo(.landscapeLeft)
+            StructuredLogger.shared.debug("Forcing landscapeLeft orientation", category: .ui)
+        } else if params.orientation == .landscapeRight {
+            rotateTo(.landscapeRight)
+            StructuredLogger.shared.debug("Forcing landscapeRight orientation", category: .ui)
+        } else if params.orientation == .landscape {
+            rotateTo(.landscapeLeft)
+            StructuredLogger.shared.debug("Forcing landscape (left) orientation", category: .ui)
+        } else if params.orientation == .portrait {
+            rotateTo(.portrait)
+            StructuredLogger.shared.debug("Forcing portrait orientation", category: .ui)
+        }
+
+        StructuredLogger.shared.debug("Configured with mode: \(params.displayMode), hideTabBar: \(params.hideTabBar), disableSwipeBack: \(params.disableSwipeBack)", category: .ui)
+    }
+
+    ///  通过 Bridge 开启/关闭浏览器特性
+    public func setBrowserFeature(_ feature: String, enabled: Bool) {
+        switch feature {
+        case "bounces":
+            bouncesEnabled = enabled
+            webView.scrollView.bounces = enabled
+            webView.scrollView.alwaysBounceVertical = enabled
+            webView.scrollView.alwaysBounceHorizontal = enabled
+
+        case "scrollIndicator":
+            scrollIndicatorEnabled = enabled
+            webView.scrollView.showsVerticalScrollIndicator = enabled
+            webView.scrollView.showsHorizontalScrollIndicator = enabled
+
+        case "backForwardGestures":
+            backForwardGesturesEnabled = enabled
+            webView.allowsBackForwardNavigationGestures = enabled
+
+        case "scrollEnabled":
+            webView.scrollView.isScrollEnabled = enabled
+
+        default:
+            StructuredLogger.shared.warning("Unknown browser feature: \(feature)", category: .ui)
+        }
+
+        StructuredLogger.shared.debug("Browser feature '\(feature)' set to \(enabled)", category: .ui)
+    }
+
+    // MARK: - Overrides
+
+    public override var prefersStatusBarHidden: Bool {
+        return isStatusBarHidden
+    }
+
+    public override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        return supportedOrientations
+    }
+
+    public override var shouldAutorotate: Bool {
+        return true
+    }
+
+    private func setupImmersiveReturnButton() {
+        view.addSubview(immersiveExitControl)
+        immersiveExitControl.onExit = { [weak self] in self?.exitImmersivePWA() }
+        immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePWA() }
+        immersiveExitControl.onFavorite = { [weak self] in self?.toggleFavoriteTapped() }
+
+        view.addSubview(immersiveSettingsButton)
+        immersiveSettingsButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            immersiveSettingsButton.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: ThemeTokens.Spacing.sm
+            ),
+            immersiveSettingsButton.trailingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                constant: -ThemeTokens.Spacing.md
+            ),
+            immersiveSettingsButton.widthAnchor.constraint(equalToConstant: ThemeTokens.ComponentContract.TapTarget.minimumWidth),
+            immersiveSettingsButton.heightAnchor.constraint(equalToConstant: ThemeTokens.ComponentContract.TapTarget.minimumHeight)
+        ])
+        immersiveSettingsButton.addTarget(
+            self,
+            action: #selector(openManagedHTMLAppSettings),
+            for: .touchUpInside
+        )
+    }
+
+    private func updateImmersiveChrome() {
+        let immersive = browserConfig?.displayMode == .immersive || browserConfig?.hideNavigationBar == true
+        navigationController?.setNavigationBarHidden(immersive, animated: false)
+        immersiveExitControl.isHidden = !immersive
+        immersiveSettingsButton.isHidden = !immersive || managedHTMLAppID == nil
+        immersiveExitControl.updateLayout(in: view)
+
+        if immersive {
+            navigationItem.rightBarButtonItem = nil
+            webView?.scrollView.contentInsetAdjustmentBehavior = .never
+            if !immersiveSettingsButton.isHidden {
+                view.bringSubviewToFront(immersiveSettingsButton)
+            }
+        } else {
+            navigationItem.rightBarButtonItem = moreButton
+            refreshFavoriteButtonState()
+        }
+    }
+
+    /// 收藏/取消收藏当前页面；写入与收藏夹页、SDK 菜单同一个收藏表。
+    @objc private func toggleFavoriteTapped() {
+        guard let url = webView?.url, url.scheme == "https" || url.scheme == "http" else { return }
+        let favoriteService = ServiceLocator.favorite
+        if favoriteService.findFavorite(url: url) != nil {
+            favoriteService.deleteFavorite(url: url)
+            HUDService.shared.showSuccess(withStatus: "已取消收藏")
+        } else {
+            favoriteService.addFavorite(url: url, title: webView?.title, favicon: nil)
+            HUDService.shared.showSuccess(withStatus: "已收藏")
+        }
+        refreshFavoriteButtonState()
+    }
+
+    /// ⋯ 底部弹出菜单（微信式，带图标）：收藏态实时读取并用图标颜色表达——
+    /// 未收藏描边星（正文色）、已收藏实心星（警示色），图标本身就是状态指示。
+    @objc private func showMoreMenuTapped() {
+        guard let url = webView?.url, url.scheme == "https" || url.scheme == "http" else { return }
+        let isFavorited = ServiceLocator.favorite.findFavorite(url: url) != nil
+        let favoriteItem = IconActionItem(
+            icon: isFavorited
+                ? LucideIcon.star.templateImage(pointSize: 22)
+                : LucideIcon.starOutline.templateImage(pointSize: 22),
+            title: isFavorited ? "取消收藏" : "收藏页面",
+            iconTint: isFavorited ? ThemeTokens.Color.warning : nil
+        ) { [weak self] in
+            self?.toggleFavoriteTapped()
+        }
+        let copyItem = IconActionItem(
+            icon: LucideIcon.link.templateImage(pointSize: 22),
+            title: "复制链接"
+        ) {
+            UIPasteboard.general.string = url.absoluteString
+            HUDService.shared.showSuccess(withStatus: "链接已复制")
+        }
+        IconActionSheet.show(in: view, items: [favoriteItem, copyItem])
+    }
+
+    func refreshFavoriteButtonState() {
+        guard let url = webView?.url else { return }
+        let isFavorited = ServiceLocator.favorite.findFavorite(url: url) != nil
+        immersiveExitControl.isFavorited = isFavorited
+    }
+
+    @objc private func reloadImmersivePWA() {
+        // Keep local strong-offline packages local. Remote pages use a normal
+        // origin reload so a stuck network document gets a genuine retry.
+        if webView.url?.isFileURL == true {
+            webView.reload()
+        } else {
+            webView.reloadFromOrigin()
+        }
+    }
+
+    @objc private func openManagedHTMLAppSettings() {
+        guard let appID = managedHTMLAppID,
+              let settings = HTMLAppHostUI.settingsViewControllerProvider?
+                .makeHTMLAppSettingsViewController(
+                    appID: appID,
+                    documentURL: webView.url ?? managedHTMLAppDocumentURL
+                ) else {
+            let alert = UIAlertController(
+                title: "设置模块不可用",
+                message: "当前宿主没有提供这个 PWA 的应用设置页面。",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        // 权限中心要求全屏（无底部 Tab，靠导航栏返回）
+        settings.hidesBottomBarWhenPushed = true
+        navigationController?.pushViewController(settings, animated: true)
+    }
+
+    private func exitImmersivePWA() {
+        if let navigationController, navigationController.viewControllers.count > 1 {
+            navigationController.popViewController(animated: true)
+        } else if let tabBarController {
+            tabBarController.selectedIndex = 0
+        } else {
+            dismiss(animated: true)
+        }
+    }
+
+    deinit {
+        //  Clean up KVO observer
+        loadingObserver?.invalidate()
+        loadingObserver = nil
+
+        // Store references to clean up outside of actor context
+        let handlerNames = registeredHandlerNames
+        let webViewInstance = webView
+        let interceptor = gestureInterceptor
+        let pooled = isPooledInstance
+        let bridgeInstance = bridge
+        let webViewForPool = pooled ? webView : nil
+        let bridgeForPool = pooled ? bridge : nil
+
+        Task { @MainActor in
+            bridgeInstance?.endManagedHTMLAppSession()
+            //  Remove all script message handlers to prevent memory leaks
+            // WKUserContentController.add(_:name:) creates strong references
+            for handlerName in handlerNames {
+                webViewInstance?.configuration.userContentController.removeScriptMessageHandler(forName: handlerName)
+            }
+
+            //  Clear delegates to break strong reference cycles
+            webViewInstance?.navigationDelegate = nil
+            webViewInstance?.uiDelegate = nil
+
+            // 如果是从池中获取的，回收实例到池中（性能优化）
+            if pooled, let webView = webViewForPool, let bridge = bridgeForPool {
+                let instance = WebViewPool.WebViewInstance(
+                    webView: webView,
+                    bridge: bridge
+                )
+                WebViewPool.shared.recycle(instance)
+                StructuredLogger.shared.debug("Recycled instance to pool", category: .lifecycle)
+            } else if let bridge = bridgeInstance {
+                WebBridgePool.shared.recycleBridge(bridge)
+                StructuredLogger.shared.debug("Recycled bridge only", category: .lifecycle)
+            }
+        }
+
+        NotificationCenter.default.removeObserver(self)
+        interceptor?.cleanup()
+        registeredHandlerNames.removeAll()
+
+        StructuredLogger.shared.debug("Cleaned up with proper memory management", category: .lifecycle)
+    }
+}

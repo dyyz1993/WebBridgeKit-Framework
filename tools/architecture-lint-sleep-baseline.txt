@@ -1,0 +1,20 @@
+# file: allowed_sleep_count (ratchet — do not grow)
+Tests/CacheTests/CacheManagerTests.swift 1
+Tests/CacheTests/CacheRuleManagerTests.swift 23
+Tests/CacheTests/CacheStatisticsTests.swift 3
+Tests/CacheTests/DiskCacheTests.swift 1
+Tests/CacheTests/ManifestStoreIntegrityTests.swift 2
+Tests/CacheTests/ManifestStoreTests.swift 13
+Tests/CacheTests/MemoryCacheTests.swift 2
+Tests/CacheTests/ResourceCacheTests.swift 8
+Tests/CacheTests/URLRuleMatcherTests.swift 9
+Tests/CacheTests/WebResourceCacheManagerTests.swift 1
+Tests/CoreTests/WebViewPerformanceMonitorTests.swift 11
+Tests/CoreTests/WebViewPoolTests+Extended.swift 1
+Tests/Infrastructure/StructuredLoggerTests.swift 1
+Tests/ModelsTests/CacheEntryRealmTests.swift 1
+Tests/ServicesTests/MockHistoryServiceAdvancedTests.swift 3
+Tests/UtilsTests/HUDServiceTests.swift 1
+Tests/UtilsTests/PerformanceMonitorTests.swift 24
+Tests/UtilsTests/RequestDeduplicatorTests.swift 5
+Tests/WebBridgeKitTests/ThreadSafetyTests.swift 4

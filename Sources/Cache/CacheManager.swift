@@ -1,0 +1,293 @@
+import Foundation
+
+/// Central cache manager providing unified cache interface
+public actor CacheManager {
+    /// Shared singleton instance
+    public static let shared = CacheManager()
+
+    private let memoryCache: MemoryCache<String, Data>
+    private let diskCache: DiskCache
+    private var configuration: CacheConfiguration
+    // private var specializedCaches: [String: any CacheStorage] = [:]
+
+    /// Cache statistics
+    public private(set) var globalStatistics: SystemCacheStatistics
+
+    private init() {
+        self.memoryCache = MemoryCache<String, Data>(configuration: .default)
+        self.configuration = .default
+        self.globalStatistics = SystemCacheStatistics(
+            totalRequests: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+            hitRate: 0.0,
+            totalCacheSize: 0
+        )
+        
+        WebBridgeLogger.shared.info("CacheManager: Attempting persistent cache initialization...")
+        
+        do {
+            self.diskCache = try DiskCache(directoryName: "CacheManager", configuration: .persistent)
+            WebBridgeLogger.shared.info("CacheManager: Persistent cache initialized successfully")
+        } catch {
+            WebBridgeLogger.shared.warning("CacheManager: Failed to initialize persistent cache: \(error)")
+            
+            WebBridgeLogger.shared.info("CacheManager: Attempting default cache initialization...")
+            do {
+                self.diskCache = try DiskCache(directoryName: "CacheManager", configuration: .default)
+                WebBridgeLogger.shared.info("CacheManager: Default cache initialized successfully")
+            } catch {
+                WebBridgeLogger.shared.error("CacheManager: Failed to initialize default cache: \(error)")
+                
+                WebBridgeLogger.shared.info("CacheManager: Attempting minimal fallback cache...")
+                do {
+                    let minimalConfig = CacheConfiguration(
+                        expirationPolicy: .minutes(5),
+                        evictionPolicy: .leastRecentlyUsed,
+                        maxSize: 100,
+                        enableCompression: false
+                    )
+                    
+                    self.diskCache = try DiskCache(directoryName: "CacheManager_Fallback", configuration: minimalConfig)
+                    WebBridgeLogger.shared.warning("CacheManager: Minimal fallback cache initialized (limited capacity)")
+                } catch {
+                    let errorMessage = """
+                    CacheManager: Failed to initialize disk cache after all attempts.
+                    Persistent error: \(error)
+                    
+                    The application cannot function without a working disk cache.
+                    Please check file system permissions and available disk space.
+                    """
+                    fatalError(errorMessage)
+                }
+            }
+        }
+    }
+
+    // MARK: - Generic Cache Operations
+
+    public func get<T: Codable & Sendable>(for key: String, as type: T.Type, namespace: String? = nil) async -> T? {
+        let fullKey = namespace.map { CacheKeyGenerator.generate(namespace: $0, identifier: key) } ?? key
+
+        if let data = await memoryCache.get(for: fullKey) {
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+
+        if let data = await diskCache.getTypedData(for: fullKey) {
+            if let value = try? JSONDecoder().decode(T.self, from: data) {
+                if let encoded = try? JSONEncoder().encode(value) {
+                    await memoryCache.set(encoded, for: fullKey, expiration: configuration.expirationPolicy.timeInterval)
+                }
+                return value
+            }
+        }
+
+        return nil
+    }
+
+    /// Store value in cache
+    /// - Parameters:
+    ///   - value: Value to cache
+    ///   - key: Cache key
+    ///   - expiration: Expiration time in seconds (optional)
+    ///   - namespace: Optional namespace for key
+    public func set<T: Codable & Sendable>(
+        _ value: T,
+        for key: String,
+        expiration: TimeInterval? = nil,
+        namespace: String? = nil
+    ) async {
+        let fullKey = namespace.map { CacheKeyGenerator.generate(namespace: $0, identifier: key) } ?? key
+
+        let exp = expiration ?? configuration.expirationPolicy.timeInterval
+
+        if let encoded = try? JSONEncoder().encode(value) {
+            await memoryCache.set(encoded, for: fullKey, expiration: exp)
+        }
+        await diskCache.set(value, for: fullKey, expiration: expiration)
+    }
+
+    /// Remove cached value
+    /// - Parameter key: Cache key
+    public func remove(for key: String) async {
+        await memoryCache.remove(for: key)
+        await diskCache.remove(for: key)
+    }
+
+    /// Clear all caches
+    public func clearAll() async {
+        await memoryCache.clearAll()
+        await diskCache.clearAll()
+        // for (_, _) in specializedCaches {
+        //     // Note: We can't directly clear generic caches, so this is limited
+        //     // In production, you'd need to track and clear appropriately
+        // }
+    }
+
+    // MARK: - Specialized Cache Operations
+
+    // Register specialized cache for specific type
+    // - Parameters:
+    //   - cache: Cache implementation
+    //   - name: Cache name
+    // public func register<T: CacheStorage>(cache: T, forName name: String) async {
+    //     specializedCaches[name] = cache
+    // }
+
+    // Get specialized cache by name
+    // - Parameter name: Cache name
+    // - Returns: Cache if exists
+    // public func getCache(forName name: String) -> (any CacheStorage)? {
+    //     specializedCaches[name]
+    // }
+
+    // MARK: - API Response Caching
+
+    /// Cache API response
+    /// - Parameters:
+    ///   - response: Response data
+    ///   - url: Request URL
+    ///   - method: HTTP method
+    ///   - expiration: Expiration time
+    public func cacheAPIResponse<T: Codable & Sendable>(
+        _ response: T,
+        url: URL,
+        method: String = "GET",
+        expiration: TimeInterval? = nil
+    ) async {
+        let key = CacheKeyGenerator.generate(from: url, method: method)
+        await set(response, for: key, expiration: expiration, namespace: CacheNamespace.api)
+    }
+
+    /// Get cached API response
+    /// - Parameters:
+    ///   - url: Request URL
+    ///   - method: HTTP method
+    ///   - type: Response type
+    /// - Returns: Cached response if exists
+    public func getCachedAPIResponse<T: Codable & Sendable>(
+        url: URL,
+        method: String = "GET",
+        as type: T.Type
+    ) async -> T? {
+        let key = CacheKeyGenerator.generate(from: url, method: method)
+        return await get(for: key, as: type, namespace: CacheNamespace.api)
+    }
+
+    // MARK: - Statistics
+
+    /// Get cache statistics
+    /// - Returns: Combined cache statistics
+    public func getStatistics() async -> (memory: SystemCacheStatistics, disk: SystemCacheStatistics) {
+        async let memStats = memoryCache.getStatistics()
+        async let diskStats = diskCache.getStatistics()
+        return (await memStats, await diskStats)
+    }
+
+    /// Get global statistics summary
+    /// - Returns: Global statistics across all caches
+    public func getGlobalStatistics() async -> SystemCacheStatistics {
+        let stats = await getStatistics()
+        let totalHits = stats.memory.cacheHits + stats.disk.cacheHits
+        let totalMisses = stats.memory.cacheMisses + stats.disk.cacheMisses
+        let totalRequests = totalHits + totalMisses
+        let hitRate = totalRequests > 0 ? Double(totalHits) / Double(totalRequests) : 0.0
+        let totalCacheSize = stats.memory.totalCacheSize + stats.disk.totalCacheSize
+
+        return SystemCacheStatistics(
+            totalRequests: totalRequests,
+            cacheHits: totalHits,
+            cacheMisses: totalMisses,
+            hitRate: hitRate,
+            totalCacheSize: totalCacheSize
+        )
+    }
+
+    /// Reset all statistics
+    public func resetStatistics() async {
+        await memoryCache.resetStatistics()
+        await diskCache.resetStatistics()
+        globalStatistics = SystemCacheStatistics(
+            totalRequests: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+            hitRate: 0.0,
+            totalCacheSize: 0
+        )
+    }
+
+    /// Print cache statistics to console
+    public func printStatistics() async {
+        let stats = await getStatistics()
+        let global = await getGlobalStatistics()
+
+        StructuredLogger.shared.debug("=== Cache Statistics ===", category: .cache)
+        StructuredLogger.shared.debug("Memory Cache:", category: .cache)
+        StructuredLogger.shared.debug("  Hits: \(stats.memory.cacheHits), Misses: \(stats.memory.cacheMisses)", category: .cache)
+        StructuredLogger.shared.debug("  Hit Rate: \(String(format: "%.2f%%", stats.memory.hitRate * 100))", category: .cache)
+        StructuredLogger.shared.debug("  Total Size: \(ByteCountFormatter.string(fromByteCount: stats.memory.totalCacheSize, countStyle: .file))", category: .cache)
+        StructuredLogger.shared.debug("", category: .cache)
+        StructuredLogger.shared.debug("Disk Cache:", category: .cache)
+        StructuredLogger.shared.debug("  Hits: \(stats.disk.cacheHits), Misses: \(stats.disk.cacheMisses)", category: .cache)
+        StructuredLogger.shared.debug("  Hit Rate: \(String(format: "%.2f%%", stats.disk.hitRate * 100))", category: .cache)
+        StructuredLogger.shared.debug("  Total Size: \(ByteCountFormatter.string(fromByteCount: stats.disk.totalCacheSize, countStyle: .file))", category: .cache)
+        StructuredLogger.shared.debug("", category: .cache)
+        StructuredLogger.shared.debug("Global:", category: .cache)
+        StructuredLogger.shared.debug("  Total Requests: \(global.totalRequests)", category: .cache)
+        StructuredLogger.shared.debug("  Overall Hit Rate: \(String(format: "%.2f%%", global.hitRate * 100))", category: .cache)
+        StructuredLogger.shared.debug("  Total Cache Size: \(ByteCountFormatter.string(fromByteCount: global.totalCacheSize, countStyle: .file))", category: .cache)
+    }
+
+    /// Record current memory usage
+    public func recordMemoryUsage() {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+
+        if result == KERN_SUCCESS {
+            let residentMB = Double(info.resident_size) / 1024.0 / 1024.0
+            Log.info("Memory usage: \(String(format: "%.2f", residentMB)) MB (type: resident)", category: .performance)
+        }
+    }
+}
+
+// MARK: - Convenience Extensions
+
+extension CacheManager {
+    /// Cache with automatic expiration based on policy
+    /// - Parameters:
+    ///   - value: Value to cache
+    ///   - key: Cache key
+    ///   - policy: Cache expiration policy
+    public func set<T: Codable & Sendable>(
+        _ value: T,
+        for key: String,
+        policy: CacheExpirationPolicy
+    ) async {
+        await set(value, for: key, expiration: policy.timeInterval)
+    }
+
+    /// Get or compute cached value
+    /// - Parameters:
+    ///   - key: Cache key
+    ///   - expiration: Expiration time
+    ///   - factory: Factory function to compute value if not cached
+    /// - Returns: Cached or newly computed value
+    public func getOrSet<T: Codable & Sendable>(
+        for key: String,
+        expiration: TimeInterval?,
+        factory: @Sendable () async throws -> T
+    ) async throws -> T {
+        if let cached = await get(for: key, as: T.self) {
+            return cached
+        }
+
+        let value = try await factory()
+        await set(value, for: key, expiration: expiration)
+        return value
+    }
+}

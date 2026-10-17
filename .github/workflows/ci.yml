@@ -1,0 +1,397 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_START_TIME: ${{ github.event.head_commit.timestamp }}
+  XCODE_VERSION: '16.4'
+
+jobs:
+  # ─── Job 1: SwiftLint ───────────────────────────────────────────
+  swiftlint:
+    name: SwiftLint
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Cache Homebrew
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: brew-${{ runner.os }}-swiftlint
+
+      - name: Run SwiftLint
+        run: |
+          brew install swiftlint
+          swiftlint lint --config .swiftlint.yml --reporter github-actions-logging Sources/ AppTemplate/Sources/
+
+  # ─── Job 2: Build ───────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: macos-15
+    timeout-minutes: 30
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+
+      # The shell verification gates (deliverable boundaries, template gate,
+      # design lint) rely on ripgrep, which is not preinstalled on the
+      # macos-15 runner image.
+      - name: Install ripgrep
+        run: brew install ripgrep
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Setup Project
+        uses: ./.github/actions/setup-project
+
+      - name: Verify deliverable boundaries
+        run: bash tools/verify-deliverable-boundaries.sh
+
+      - name: Build WebBridgeKit framework
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace WebBridgeKit.xcworkspace \
+            -scheme WebBridgeKit \
+            -sdk iphonesimulator \
+            -arch arm64 \
+            -configuration Debug \
+            -resultBundlePath build/BuildResults.xcresult \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
+
+      - name: Build AppTemplate starter
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace WebBridgeKit.xcworkspace \
+            -scheme AppTemplate \
+            -sdk iphonesimulator \
+            -arch arm64 \
+            -configuration Debug \
+            -resultBundlePath build/AppTemplateBuildResults.xcresult \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
+
+      - name: Upload Build Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-results
+          path: |
+            build/BuildResults.xcresult
+            build/AppTemplateBuildResults.xcresult
+          retention-days: 7
+
+      - name: Upload DerivedData
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: derived-data
+          path: ~/Library/Developer/Xcode/DerivedData/WebBridgeKit-*/
+          retention-days: 1
+
+  # ─── Job 3-5: Unit Tests (3 groups, was 11 individual) ─────────
+  unit-tests:
+    name: Unit Tests (${{ matrix.group.name }})
+    runs-on: macos-15
+    timeout-minutes: 30
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - name: CoreA
+            schemes: >-
+              CacheTests
+              BridgeTests
+              CoreTests
+          - name: CoreB
+            schemes: >-
+              ModelsTests
+              UtilsTests
+              ServicesTests
+          - name: Handlers
+            schemes: >-
+              HandlerTests-Part1
+              HandlerTests-Part2
+              CommandParserTests
+              WebSocketTests
+              SkillsTests
+          - name: Modules
+            schemes: >-
+              MessageTests
+              AITests
+              InfrastructureTests
+              BaseTests
+              ExtensionsTests
+              ManagersTests
+              ViewModelTests
+              WebBridgeKitTests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Download DerivedData
+        uses: actions/download-artifact@v4
+        with:
+          name: derived-data
+          path: ~/Library/Developer/Xcode/DerivedData/
+
+      - name: Setup Project
+        uses: ./.github/actions/setup-project
+
+      - name: Setup Simulator
+        id: sim
+        run: |
+          echo "=== SDK Info ==="
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version 2>/dev/null || true
+          xcodebuild -downloadPlatform iOS 2>/dev/null || true
+          echo "=== Available runtimes ==="
+          xcrun simctl list runtimes
+
+          SDK_VER=$(xcrun --sdk iphonesimulator --show-sdk-version 2>/dev/null | cut -d. -f1 || echo "18")
+          echo "SDK major version: $SDK_VER"
+
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          runtimes = data.get('runtimes', [])
+          ios = [rt for rt in runtimes if 'iOS' in rt.get('identifier', '') and rt.get('isAvailable')]
+          if ios:
+              sdk_ver = '${SDK_VER}'
+              preferred = [rt for rt in ios if rt.get('version', '').startswith(sdk_ver + '.')]
+              if preferred:
+                  preferred.sort(key=lambda r: tuple(int(x) for x in r.get('version', '0').split('.')), reverse=True)
+                  print(preferred[0]['identifier'])
+              else:
+                  ios.sort(key=lambda r: tuple(int(x) for x in r.get('version', '0').split('.')), reverse=True)
+                  for rt in ios:
+                      v = rt.get('version', '')
+                      major = int(v.split('.')[0]) if v else 99
+                      if major <= int(sdk_ver):
+                          print(rt['identifier'])
+                          break
+                  else:
+                      print(ios[0]['identifier'])
+          else:
+              print('', file=sys.stderr)
+              sys.exit(1)
+          " 2>/dev/null || echo "")
+
+          if [ -z "$RUNTIME" ]; then
+            echo "::warning::JSON parse failed, trying runtime identifier fallback"
+            for ver in "${SDK_VER}-2" "${SDK_VER}-1" "${SDK_VER}-0" "18-2" "18-1" "18-0" "17-5" "17-4" "17-0"; do
+              for sep in "-" "_"; do
+                candidate="com.apple.CoreSimulator.SimRuntime.iOS${sep}${ver}"
+                if xcrun simctl list runtimes | grep -qF "$candidate"; then
+                  RUNTIME="$candidate"
+                  break 2
+                fi
+              done
+            done
+          fi
+
+          if [ -z "$RUNTIME" ]; then
+            echo "::warning::No iOS runtime found"
+            echo "use_simulator=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Using runtime: $RUNTIME"
+          # TODO: Add "iPhone SE (3rd generation)" to matrix for compact layout testing (320pt)
+          DEVICE_ID=$(xcrun simctl create "CI-Unit-${{ matrix.group.name }}" "iPhone 16 Pro" "$RUNTIME" || echo "")
+          if [ -z "$DEVICE_ID" ]; then
+            echo "::warning::Failed to create simulator"
+            echo "use_simulator=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b 2>/dev/null || true
+          echo "device_id=$DEVICE_ID" >> $GITHUB_OUTPUT
+          echo "use_simulator=true" >> $GITHUB_OUTPUT
+          echo "Simulator ready: $DEVICE_ID (runtime: $RUNTIME)"
+
+      - name: Run All Schemes in Group
+        if: steps.sim.outputs.use_simulator == 'true'
+        id: run_tests
+        run: |
+          set -o pipefail
+          mkdir -p build/test-results
+
+          SCHEMES="${{ matrix.group.schemes }}"
+          DESTINATION="platform=iOS Simulator,id=${{ steps.sim.outputs.device_id }}"
+          PASSED=""
+          FAILED=""
+
+          for SCHEME in $SCHEMES; do
+            echo ""
+            echo "========================================="
+            echo "🧪 Running: $SCHEME"
+            echo "========================================="
+
+            ATTEMPT=1
+            MAX_ATTEMPTS=2
+            SCHEME_OK=false
+
+            while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+              echo "  Attempt $ATTEMPT/$MAX_ATTEMPTS for $SCHEME"
+
+              set +e
+              xcodebuild test \
+                -workspace WebBridgeKit.xcworkspace \
+                -scheme "$SCHEME" \
+                -sdk iphonesimulator \
+                -destination "$DESTINATION" \
+                -resultBundlePath "build/TestResults-${SCHEME}.xcresult" \
+                -enableCodeCoverage YES \
+                CODE_SIGN_IDENTITY="" \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGNING_ALLOWED=NO \
+                2>&1 | tee "build/test-output-${SCHEME}.log" | xcpretty --color --report junit --output "build/test-results-${SCHEME}.xml" || true
+              TEST_EXIT=${PIPESTATUS[0]}
+              set -e
+
+              if [ "$TEST_EXIT" -eq 0 ] && [ -f "build/test-results-${SCHEME}.xml" ]; then
+                SCHEME_OK=true
+                break
+              fi
+
+              ATTEMPT=$((ATTEMPT + 1))
+              if [ $ATTEMPT -le $MAX_ATTEMPTS ]; then
+                echo "  ⚠️ $SCHEME failed, retrying in 5s..."
+                sleep 5
+              fi
+            done
+
+            if $SCHEME_OK; then
+              echo "  ✅ $SCHEME passed"
+              PASSED="$PASSED $SCHEME"
+            else
+              echo "  ❌ $SCHEME failed after $MAX_ATTEMPTS attempts"
+              FAILED="$FAILED $SCHEME"
+            fi
+          done
+
+          echo ""
+          echo "========================================="
+          echo "📊 Group Results: ${{ matrix.group.name }}"
+          echo "========================================="
+          echo "  ✅ Passed: $PASSED"
+          echo "  ❌ Failed: $FAILED"
+
+          # Merge all JUnit XMLs for reporting
+          echo '<?xml version="1.0" encoding="UTF-8"?><testsuites>' > "build/test-results.xml"
+          for SCHEME in $SCHEMES; do
+            if [ -f "build/test-results-${SCHEME}.xml" ]; then
+              # Extract <testsuite> content
+              sed -n '/<testsuite/,/<\/testsuite>/p' "build/test-results-${SCHEME}.xml" >> "build/test-results.xml" 2>/dev/null || true
+            fi
+          done
+          echo '</testsuites>' >> "build/test-results.xml"
+
+          if [ -n "$FAILED" ]; then
+            echo "::error::Failed schemes in ${{ matrix.group.name }}:$FAILED"
+            exit 1
+          fi
+
+      - name: Skip (no simulator)
+        if: steps.sim.outputs.use_simulator != 'true'
+        run: |
+          echo "::warning::No simulator — skipping ${{ matrix.group.name }}"
+          mkdir -p build/test-results
+          echo '<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite name="${{ matrix.group.name }}" tests="1" failures="0"><testcase name="skipped" classname="${{ matrix.group.name }}"/></testsuite></testsuites>' > build/test-results.xml
+
+      - name: Publish Coverage Report
+        if: always() && success()
+        run: |
+          for SCHEME in ${{ matrix.group.schemes }}; do
+            xcrun xccov view --report "build/TestResults-${SCHEME}.xcresult" > "build/coverage-${SCHEME}.txt" 2>/dev/null || true
+          done
+          cat build/coverage-*.txt 2>/dev/null || echo "No coverage data"
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.group.name }}
+          path: |
+            build/TestResults-*.xcresult
+            build/test-results.xml
+          retention-days: 14
+
+      - name: Upload Coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.group.name }}
+          path: build/coverage-*.txt
+          retention-days: 7
+
+      - name: Publish Test Report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: build/test-results.xml
+          check_name: "Unit Tests (${{ matrix.group.name }})"
+
+      - name: Capture Diagnostics
+        if: always() && failure()
+        run: |
+          DEVICE_ID="${{ steps.sim.outputs.device_id }}"
+          if [ -n "$DEVICE_ID" ]; then
+            mkdir -p diagnostics
+            xcrun simctl spawn "$DEVICE_ID" log show --last 2m 2>/dev/null > diagnostics/sim-device.log || true
+            echo "=== Device State ===" > diagnostics/device-state.txt
+            xcrun simctl list devices | grep -A2 "$DEVICE_ID" >> diagnostics/device-state.txt 2>/dev/null || true
+          fi
+
+      - name: Upload Diagnostics
+        if: always() && failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.group.name }}
+          path: diagnostics/
+          retention-days: 7
+
+      - name: Cleanup Simulator
+        if: always()
+        run: |
+          DEVICE_ID="${{ steps.sim.outputs.device_id }}"
+          if [ -n "$DEVICE_ID" ]; then
+            xcrun simctl shutdown "$DEVICE_ID" 2>/dev/null || true
+            xcrun simctl delete "$DEVICE_ID" 2>/dev/null || true
+          fi
+

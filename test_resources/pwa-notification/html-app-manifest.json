@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1",
+  "appId": "com.webbridgekit.fixture.chat",
+  "name": "WebBridgeKit Notification Demo",
+  "startURL": "https://ae8fcb.shanbox.19930810.xyz:8443/test_resources/pwa-notification/index.html",
+  "allowedOrigins": [
+    "https://ae8fcb.shanbox.19930810.xyz:8443"
+  ],
+  "capabilities": [
+    "notification"
+  ],
+  "routes": [
+    "/test_resources/pwa-notification/index.html",
+    "/test_resources/pwa-notification/approval.html"
+  ],
+  "cache": {
+    "strategy": "manifest",
+    "version": "2026.08.10-tx.1",
+    "persistent": true,
+    "restoresLastState": true
+  }
+}

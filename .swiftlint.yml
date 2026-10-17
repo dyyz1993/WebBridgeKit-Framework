@@ -1,0 +1,101 @@
+disabled_rules:
+  - trailing_whitespace
+  - identifier_name
+  - type_body_length
+  - function_body_length
+  - cyclomatic_complexity
+  - type_name
+  - large_tuple
+  - nesting
+  - vertical_whitespace
+  - force_cast
+  - force_try
+  - todo
+
+# Re-enabled with relaxed thresholds after Phase 0 refactoring
+line_length:
+  warning: 300
+  error: 500
+  ignores_function_declarations: true
+  ignores_comments: true
+  ignores_urls: true
+
+file_length:
+  warning: 600
+  error: 1000
+  ignore_comment_only_lines: true
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - explicit_init
+  - overridden_super_call
+  - private_outlet
+  - prohibited_super_call
+  - vertical_parameter_alignment
+  - first_where
+  # Deferred (too many existing warnings):
+  # - explicit_type_interface (9048 violations)
+  # - sorted_imports (338 violations)
+
+included:
+  - Sources
+  - SuperApp/Sources
+  - AppTemplate/Sources
+
+excluded:
+  - Pods
+  - SuperAppUITests
+  - Tests
+
+reporter: "github-actions-logging"
+
+custom_rules:
+  no_hardcoded_rgb_color:
+    name: "No Hardcoded RGB Colors"
+    regex: 'UIColor\(red:\s*[\d.]+'
+    excluded: ".*Theme/(ThemeTokens|ThemeManager)\\.swift|.*WKColor\\.swift"
+    message: "使用 ThemeTokens.Color.* 替代硬编码 RGB 颜色"
+    severity: warning
+
+  no_system_colors:
+    name: "No System Colors"
+    regex: '\.(systemBlue|systemRed|systemGreen|systemOrange|systemPurple|systemPink|systemTeal|systemYellow|systemIndigo)\b'
+    excluded: ".*Theme/.*|.*WKColor\\.swift"
+    message: "使用 ThemeTokens.Color.* 替代系统颜色"
+    severity: warning
+
+  no_system_background:
+    name: "No System Background Colors"
+    regex: '\.(systemBackground|secondarySystemBackground|tertiarySystemBackground|systemGroupedBackground|secondarySystemGroupedBackground)\b'
+    excluded: ".*Theme/.*|.*WKColor\\.swift"
+    message: "使用 ThemeTokens.Color.background/surface 替代系统背景色"
+    severity: warning
+
+  no_system_labels:
+    name: "No System Label Colors"
+    regex: '\.(secondaryLabel|tertiaryLabel|quaternaryLabel)\b'
+    excluded: ".*Theme/.*"
+    message: "使用 ThemeTokens.Color.text/textSecondary/textTertiary 替代系统文字色"
+    severity: warning
+
+  no_static_color_tokens:
+    name: "No Static Color Tokens"
+    regex: 'ThemeTokens\.Colors\.(Light|Dark)\.'
+    excluded: ".*Theme/ThemeTokens\\.swift|.*ComponentCatalogViewController.*"
+    message: "使用 ThemeTokens.Color.* 替代静态 Colors.Light/Dark（不支持 Dark Mode）"
+    severity: warning
+
+  prefer_lucide_icons:
+    name: "Prefer Lucide Icons"
+    regex: 'UIImage\(systemName:\s*"'
+    excluded: ".*Theme/.*|.*LucideIcon\\.swift"
+    message: "建议使用 LucideIcon.*.image() 替代 SF Symbols"
+    severity: warning
+
+  prefer_dynamic_type:
+    name: "Prefer Dynamic Type"
+    regex: 'UIFont\.(systemFont|boldSystemFont)\(ofSize:\s*\d+'
+    excluded: ".*Theme/.*|.*WKColor\\.swift"
+    message: "使用 ThemeTokens.Typography.* 或 UIFontMetrics 替代固定字号"
+    severity: warning

@@ -1,0 +1,728 @@
+//
+//  WebBrowserViewController.swift
+//  WebBridgeKit
+//
+//  Created by Claude on 2025-01-13.
+//  Copyright © 2025年 WebBridgeKit. All rights reserved.
+//
+
+import RxCocoa
+import RxSwift
+import SnapKit
+import UIKit
+import WebKit
+
+/// 浏览器主页面 - 全屏沉浸式
+public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
+
+    // MARK: - UI Components
+
+    lazy var webView: WKWebView = {
+        return viewModel.getWebView()
+    }()
+
+    let progressView: UIProgressView = {
+        let progressView = UIProgressView(progressViewStyle: .default)
+        progressView.tintColor = ThemeTokens.Color.textSecondary
+        progressView.trackTintColor = ThemeTokens.Color.textTertiary
+        return progressView
+    }()
+
+    /// 缓存状态标签（内边距 + 居中 + 随文本自适应宽度）
+    let cacheStatusLabel: UILabel = {
+        let label = PaddedStatusLabel()
+        label.font = ThemeTokens.Typography.tabLabel
+        label.textColor = ThemeTokens.Color.onPrimary
+        label.layer.cornerRadius = ThemeTokens.CornerRadius.sm
+        label.clipsToBounds = true
+        label.textAlignment = .center
+        label.text = "LIVE"
+        label.isHidden = false
+        return label
+    }()
+
+    /// 标题容器
+    let titleContainerView: UIView = {
+        let view = UIView()
+        return view
+    }()
+
+    /// 标题标签
+    let titleLabel: UILabel = {
+        let label = UILabel()
+        label.font = ThemeTokens.Typography.body
+        label.textColor = ThemeTokens.Color.textSecondary
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.accessibilityIdentifier = "browserManager.titleLabel"
+        return label
+    }()
+
+    /// 关闭/后退按钮
+    private let closeButton: UIButton = {
+        let button = UIButton(type: .system)
+        let image = LucideIcon.xmark.templateImage(pointSize: 20, weight: .medium)
+        button.setImage(image, for: .normal)
+        button.tintColor = ThemeTokens.Color.textSecondary
+        button.accessibilityIdentifier = "browserManager.closeButton"
+        button.accessibilityLabel = "关闭"
+        return button
+    }()
+
+    /// 后退按钮（当有历史时显示）
+    private let backButton: UIButton = {
+        let button = UIButton(type: .system)
+        let image = LucideIcon.chevronLeft.templateImage(pointSize: 20, weight: .medium)
+        button.setImage(image, for: .normal)
+        button.tintColor = ThemeTokens.Color.textSecondary
+        button.accessibilityIdentifier = "browserManager.backButton"
+        button.accessibilityLabel = "返回"
+        return button
+    }()
+
+    /// 更多菜单按钮
+    private let menuButton: UIButton = {
+        let button = UIButton(type: .system)
+        let image = LucideIcon.chevronDown.templateImage(pointSize: 20, weight: .regular)
+        button.setImage(image, for: .normal)
+        button.tintColor = ThemeTokens.Color.textSecondary
+        button.accessibilityIdentifier = "browserManager.menuButton"
+        button.accessibilityLabel = "更多菜单"
+        return button
+    }()
+
+    /// Host-owned menu remains reachable when a managed PWA hides the native
+    /// navigation bar. It mirrors the familiar mini-program capsule affordance.
+    let immersiveMenuButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(LucideIcon.ellipsis.templateImage(pointSize: 20, weight: .semibold), for: .normal)
+        button.tintColor = ThemeTokens.Color.text
+        button.backgroundColor = ThemeTokens.Color.surfaceElevated
+        button.layer.cornerRadius = ThemeTokens.CornerRadius.full
+        button.layer.borderWidth = 1
+        button.layer.borderColor = ThemeTokens.Color.border.cgColor
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = Float(ThemeTokens.Shadows.sm.opacity)
+        button.layer.shadowRadius = ThemeTokens.Shadows.sm.radius
+        button.layer.shadowOffset = CGSize(
+            width: ThemeTokens.Shadows.sm.offsetX,
+            height: ThemeTokens.Shadows.sm.offsetY
+        )
+        button.accessibilityIdentifier = "browserManager.immersiveMenuButton"
+        button.accessibilityLabel = "应用设置"
+        button.isHidden = true
+        return button
+    }()
+
+    private let immersiveExitControl = ImmersivePWAExitControl()
+
+    /// App identity from the WebBridgeKit launch payload, when this browser
+    /// hosts a registered HTML app instead of a plain page.
+    public private(set) var htmlAppID: String?
+
+    /// 手势 - 点击底部区域关闭（当导航栏隐藏时）
+    var tapGesture: UITapGestureRecognizer?
+
+    // MARK: - Bar Buttons
+
+    var backBarButton: UIBarButtonItem?
+    var closeBarButton: UIBarButtonItem?
+    var menuBarButton: UIBarButtonItem?
+
+    // MARK: - Properties
+
+    /// 是否隐藏导航栏
+    var hideNavBar = false
+
+    /// 是否隐藏状态栏
+    var isStatusBarHidden: Bool = false {
+        didSet {
+            setNeedsStatusBarAppearanceUpdate()
+        }
+    }
+
+    /// Host-supplied display policy must survive URL parameter parsing.
+    private(set) var configuredHideNavigationBar = false
+    private var configuredHideStatusBar = false
+
+    /// 当前 URL
+    var currentURL: URL?
+
+    /// custom:// 页间导航栈（真实 https URL）。
+    /// WebKit 对 loadHTMLString+custom:// 的文档加载不建后退历史（canGoBack
+    /// 恒 false，2026-08-20 实测），懒加载页面间的跳转历史由 App 层维护。
+    var customNavStack: [URL] = []
+
+    /// 当前缓存来源标识
+    var currentCacheSource: String = "LIVE"
+
+    /// WebView load start time for performance tracking (#54)
+    var loadStartTime: Date?
+
+    /// URL requested before the browser is visible and bound.
+    var pendingCacheLoad: (url: URL, forceRefresh: Bool)?
+
+    /// Tracks whether it is safe to start WebView navigation.
+    var hasAppeared = false
+
+    /// 调试模式：启用时会显示错误页面而不是白屏
+    public var debugMode: Bool = false
+
+    /// Track all registered script message handler names for proper cleanup
+    var registeredHandlerNames: [String] = []
+
+    // MARK: - Initialization
+
+    override init(viewModel: WebBrowserViewModel) {
+        super.init(viewModel: viewModel)
+        hidesBottomBarWhenPushed = true
+        WebBridgeLogger.shared.info("[TOOL] WebBrowserViewController init")
+    }
+
+    /// 便捷初始化 - 支持加载 URL
+    convenience init(url: URL) {
+        self.init(viewModel: WebBrowserViewModel(url: url))
+        webView.navigationDelegate = self
+        StructuredLogger.shared.debug("[TOOL] WebBrowserViewController init - URL: \(url.absoluteString)", category: .navigation)
+        StructuredLogger.shared.debug("[TOOL] navigationDelegate set", category: .navigation)
+        WebBridgeLogger.shared.info("[TOOL] WebBrowserViewController convenience init - navigationDelegate set")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public func configure(with params: WebBrowserParams) {
+        debugMode = params.debugMode
+        webView.configuration.userContentController.addUserScript(WKUserScript(
+            source: DrelWebRuntimeContract.presentationScript(for: params.displayMode),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        guard DrelContainerBuildPolicy.nativeBridgeEnabled else {
+            configuredHideNavigationBar = params.hideNavigationBar || params.displayMode == .immersive
+            configuredHideStatusBar = params.hideStatusBar || params.displayMode == .immersive
+            title = params.customTitle ?? title
+            htmlAppID = params.payload?["webbridgekitAppId"]
+            return
+        }
+        viewModel.configureManagedHTMLApp(
+            appID: params.payload?["webbridgekitAppId"],
+            documentURL: params.payload?["webbridgekitPageURL"].flatMap(URL.init(string:))
+        )
+        configuredHideNavigationBar = params.hideNavigationBar || params.displayMode == .immersive
+        configuredHideStatusBar = params.hideStatusBar || params.displayMode == .immersive
+        title = params.customTitle ?? title
+        htmlAppID = params.payload?["webbridgekitAppId"]
+
+        guard let payload = params.payload,
+              JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        let source = """
+        (() => {
+          const payload = \(json);
+          window.SuperCachePayload = payload;
+          window.WebBridgeKitLaunchContext = payload;
+          document.addEventListener('DOMContentLoaded', () => {
+            window.dispatchEvent(new CustomEvent('webbridgekit:launch', { detail: payload }));
+          }, { once: true });
+        })();
+        """
+        webView.configuration.userContentController.addUserScript(
+            WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
+    }
+
+    // MARK: - Setup UI
+
+    public override func makeUI() {
+        StructuredLogger.shared.debug("[TOOL] [WebBrowserVC] makeUI called", category: .ui)
+        view.backgroundColor = ThemeTokens.Color.background
+
+        configureNavigationBar()
+
+        view.addSubview(progressView)
+        webView.accessibilityIdentifier = "browserManager.webView"
+        view.addSubview(webView)
+        view.addSubview(immersiveExitControl)
+        immersiveExitControl.onExit = { [weak self] in self?.dismissOrPop() }
+        immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePage() }
+        immersiveExitControl.onFavorite = { [weak self] in self?.toggleImmersiveFavorite() }
+        immersiveMenuButton.addTarget(self, action: #selector(menuButtonTapped), for: .touchUpInside)
+        view.addSubview(immersiveMenuButton)
+
+        setupConstraints()
+        setupActions()
+        setupGestures()
+        applyConfiguredDisplayPolicy()
+
+        backButton.isHidden = true
+        closeButton.isHidden = false
+
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("BarkStatusBarVisibilityChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let hidden = notification.userInfo?["hidden"] as? Bool {
+                self?.setStatusBarHidden(hidden)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: ManifestCacheManager.cacheHitNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let source = notification.userInfo?["source"] as? String ?? "MANIFEST"
+            self?.updateCacheStatus(source: source)
+        }
+    }
+
+
+
+    // MARK: - Lifecycle
+
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        if let tabBarController = self.tabBarController {
+            tabBarController.tabBar.isHidden = true
+            tabBarController.view.setNeedsLayout()
+            tabBarController.view.layoutIfNeeded()
+            StructuredLogger.shared.info("[OK] [Browser] TabBar auto-hidden on webview entry", category: .ui)
+        }
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        restoreUIState()
+        // 浏览器页面真正离屏（pop/dismiss，而非栈内跳转）= 用户结束浏览，
+        // 清除会话恢复记录，避免下次冷启动复活用户已主动关闭的页面。
+        if isBeingDismissed || isMovingFromParent {
+            WebBrowserManager.shared.clearLastSession()
+        }
+    }
+
+    public override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        hasAppeared = true
+        refreshImmersiveMenuVisibility()
+
+        guard let pendingCacheLoad else { return }
+        self.pendingCacheLoad = nil
+        performLoadURLWithCache(pendingCacheLoad.url, forceRefresh: pendingCacheLoad.forceRefresh)
+    }
+
+    public override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        immersiveExitControl.updateLayout(in: view)
+    }
+
+    /// 还原系统 NavigationBar
+    private func restoreUIState() {
+        StructuredLogger.shared.debug("[SYNC] [Browser] Restoring UI state...", category: .ui)
+
+        UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+        UIViewController.attemptRotationToDeviceOrientation()
+
+        if let tabBarController = self.tabBarController {
+            tabBarController.tabBar.isHidden = false
+            tabBarController.view.setNeedsLayout()
+            tabBarController.view.layoutIfNeeded()
+            StructuredLogger.shared.info("[OK] [Browser] TabBar restored", category: .ui)
+        }
+
+        if let navigationController = self.navigationController {
+            navigationController.navigationBar.isHidden = false
+            navigationController.setNavigationBarHidden(false, animated: false)
+            StructuredLogger.shared.info("[OK] [Browser] NavigationBar restored", category: .navigation)
+        }
+
+        view.backgroundColor = ThemeTokens.Color.background
+        hideNavBar = false
+        immersiveExitControl.isHidden = true
+
+        StructuredLogger.shared.info("[OK] [Browser] UI state fully restored", category: .ui)
+    }
+
+    // MARK: - URL Loading
+
+    /// 加载 URL 并检查参数
+    private func loadURL(_ url: URL, checkParams: Bool = true) {
+        currentURL = url
+
+        if checkParams {
+            checkURLParameters(url)
+        }
+
+        if url.isFileURL {
+            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else {
+            let request = URLRequest(url: url)
+            webView.load(request)
+        }
+
+        StructuredLogger.shared.debug("[WEB] [Browser] 加载 URL: \(url.absoluteString)", category: .navigation)
+    }
+
+    /// 检查 URL 参数
+    func checkURLParameters(_ url: URL) {
+        StructuredLogger.shared.debug("[SEARCH] [WebBrowserVC] checkURLParameters called: \(url.absoluteString)", category: .navigation)
+
+        updateCacheStatus(source: "LIVE")
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            StructuredLogger.shared.debug("[WebBrowserVC] No query items found - applying host display policy", category: .ui)
+            applyConfiguredDisplayPolicy()
+            return
+        }
+
+        StructuredLogger.shared.info("[OK] [WebBrowserVC] Found \(queryItems.count) query items", category: .ui)
+
+        var shouldHideNavBar = configuredHideNavigationBar
+        var shouldHideStatusBar = configuredHideStatusBar
+        var targetOrientation: UIInterfaceOrientation?
+
+        for item in queryItems {
+            StructuredLogger.shared.debug("[SEARCH] [WebBrowserVC] Processing query item: \(item.name) = \(item.value ?? "nil")", category: .ui)
+
+            switch item.name.lowercased() {
+            case "hidenavbar":
+                if let value = item.value, value == "1" || value.lowercased() == "true" {
+                    StructuredLogger.shared.info("[OK] [WebBrowserVC] Hiding navigation bar (hidenavbar)", category: .navigation)
+                    shouldHideNavBar = true
+                }
+            case "hidestatusbar":
+                if let value = item.value, value == "1" || value.lowercased() == "true" {
+                    StructuredLogger.shared.info("[OK] [WebBrowserVC] Hiding status bar (hidestatusbar)", category: .ui)
+                    shouldHideStatusBar = true
+                }
+            case "hidetabbar":
+                StructuredLogger.shared.warning("[WARN] [WebBrowserVC] hidetabbar parameter ignored (TabBar auto-hidden)", category: .ui)
+            case "mode":
+                if let value = item.value, value.lowercased() == "immersive" {
+                    StructuredLogger.shared.info("[OK] [WebBrowserVC] Activating immersive mode (mode=immersive)", category: .ui)
+                    shouldHideNavBar = true
+                    shouldHideStatusBar = true
+                }
+            case "orientation":
+                if let value = item.value, value.lowercased() == "landscape" {
+                    StructuredLogger.shared.info("[OK] [WebBrowserVC] Forcing landscape orientation", category: .ui)
+                    targetOrientation = .landscapeRight
+                } else if let value = item.value, value.lowercased() == "portrait" {
+                    StructuredLogger.shared.info("[OK] [WebBrowserVC] Forcing portrait orientation", category: .ui)
+                    targetOrientation = .portrait
+                }
+            default:
+                break
+            }
+        }
+
+        if shouldHideNavBar {
+            setNavigationBarHidden(true)
+        }
+        if shouldHideStatusBar {
+            setStatusBarHidden(true)
+        }
+        if let orientation = targetOrientation {
+            updateOrientation(orientation)
+        }
+
+        StructuredLogger.shared.info("[OK] [WebBrowserVC] checkURLParameters completed", category: .navigation)
+    }
+
+    private func applyConfiguredDisplayPolicy() {
+        setNavigationBarHidden(configuredHideNavigationBar)
+        setStatusBarHidden(configuredHideStatusBar)
+    }
+
+    /// 重置UI状态（当URL没有参数时调用）
+    private func resetUIState() {
+        StructuredLogger.shared.debug("[SYNC] [Browser] Resetting UI state to default...", category: .ui)
+
+        setNavigationBarHidden(false)
+        setStatusBarHidden(false)
+        updateOrientation(.portrait)
+
+        StructuredLogger.shared.info("[OK] [Browser] UI state reset to default", category: .ui)
+    }
+
+    /// 更新屏幕方向
+    private func updateOrientation(_ orientation: UIInterfaceOrientation) {
+        UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
+        UIViewController.attemptRotationToDeviceOrientation()
+    }
+
+    /// 设置 TabBar 隐藏状态（动态）
+    private func setTabBarHidden(_ hidden: Bool) {
+        guard let tabBarController = self.tabBarController else {
+            StructuredLogger.shared.warning("[WARN] [Browser] No TabBarController found", category: .ui)
+            return
+        }
+
+        StructuredLogger.shared.debug("[CTRL] [Browser] setTabBarHidden called: hidden=\(hidden)", category: .ui)
+
+        tabBarController.tabBar.isHidden = hidden
+
+        tabBarController.view.setNeedsLayout()
+        tabBarController.view.layoutIfNeeded()
+
+        StructuredLogger.shared.debug("[CTRL] [Browser] TabBar isHidden: \(tabBarController.tabBar.isHidden)", category: .ui)
+        StructuredLogger.shared.debug("[CTRL] [Browser] TabBar frame: \(tabBarController.tabBar.frame)", category: .ui)
+        StructuredLogger.shared.debug("[CTRL] [Browser] ViewController frame: \(self.view.frame)", category: .ui)
+    }
+
+    /// 设置导航栏隐藏状态
+    func setNavigationBarHidden(_ hidden: Bool) {
+        hideNavBar = hidden
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            self.navigationController?.navigationBar.isHidden = hidden
+            self.navigationController?.setNavigationBarHidden(hidden, animated: false)
+            self.immersiveExitControl.isHidden = !hidden
+            self.immersiveExitControl.updateLayout(in: self.view)
+            self.refreshImmersiveMenuVisibility()
+
+            if !hidden {
+                // 左列固定 [back, close]（configureNavigationBar），这里只同步
+                // 返回按钮状态；custom:// 页面 canGoBack 恒 false，历史判断
+                // 要看 App 层栈。
+                let canGoBack = self.webView.canGoBack || self.customNavStack.count > 1
+                self.backBarButton?.isEnabled = canGoBack
+                self.backBarButton?.tintColor = canGoBack ? ThemeTokens.Color.text : .clear
+            }
+
+            self.webView.snp.remakeConstraints { make in
+                make.left.right.equalToSuperview()
+
+                if hidden {
+                    make.top.equalTo(self.view.snp.top)
+                    make.bottom.equalTo(self.view.snp.bottom)
+                } else {
+                    make.top.equalTo(self.view.safeAreaLayoutGuide.snp.top)
+                    make.bottom.equalTo(self.view.safeAreaLayoutGuide.snp.bottom)
+                }
+            }
+
+            self.webView.scrollView.contentInsetAdjustmentBehavior = .never
+
+            if hidden {
+                self.view.backgroundColor = ThemeTokens.Color.surface
+                self.webView.backgroundColor = .clear
+                self.webView.scrollView.backgroundColor = .clear
+            } else {
+                self.view.backgroundColor = ThemeTokens.Color.background
+                self.webView.backgroundColor = .clear
+                self.webView.scrollView.backgroundColor = .clear
+            }
+
+            self.view.layoutIfNeeded()
+
+            StructuredLogger.shared.debug("[CTRL] [Browser] System NavigationBar: \(hidden ? "隐藏" : "显示")", category: .navigation)
+        }
+    }
+
+    /// 设置状态栏隐藏状态
+    func setStatusBarHidden(_ hidden: Bool) {
+        isStatusBarHidden = hidden
+        setNeedsStatusBarAppearanceUpdate()
+        StructuredLogger.shared.debug("[MOBILE] [Browser] 状态栏: \(hidden ? "隐藏" : "显示")", category: .ui)
+    }
+
+    func dismissOrPop() {
+        if let navigationController = navigationController, navigationController.viewControllers.count > 1 {
+            navigationController.popViewController(animated: true)
+        } else if presentingViewController != nil {
+            dismiss(animated: true)
+        } else if let tabBarController = tabBarController {
+            tabBarController.selectedIndex = 0
+        }
+    }
+
+    /// 全屏胶囊收藏格：与 … 菜单「收藏页面」写入同一收藏表。
+    ///
+    /// Managed HTML-app pages render from the custom:// scheme, which must
+    /// never be persisted; for those the favorite stores the app's signed
+    /// https entry URL so opening it later can route back into the app.
+    /// Internal so the … menu favorite item shares this exact entry
+    /// semantics instead of persisting the raw page URL.
+    var favoriteEntryURL: URL? {
+        guard let url = webView.url else { return nil }
+        if url.scheme == "https" || url.scheme == "http" { return url }
+        guard let appID = viewModel.managedHTMLAppID,
+              let startURL = HTMLAppRuntimeCenter.shared.trustRegistry.manifest(for: appID)?.startURL,
+              let entry = URL(string: startURL) else { return nil }
+        return entry
+    }
+
+    func toggleImmersiveFavorite() {
+        guard let url = favoriteEntryURL else { return }
+        let favoriteService = ServiceLocator.favorite
+        if favoriteService.findFavorite(url: url) != nil {
+            favoriteService.deleteFavorite(url: url)
+            HUDService.shared.showSuccess(withStatus: "已取消收藏")
+            immersiveExitControl.isFavorited = false
+        } else {
+            HUDService.shared.showSuccess(withStatus: "已收藏")
+            // favicon 是异步取的；收藏态刷新必须等写入完成后，否则读到旧状态。
+            fetchFavicon { [weak self] data in
+                let title = self?.webView.title
+                    ?? (self?.viewModel.managedHTMLAppID).flatMap {
+                        HTMLAppRuntimeCenter.shared.trustRegistry.manifest(for: $0)?.name
+                    }
+                favoriteService.addFavorite(url: url, title: title, favicon: data)
+                self?.refreshImmersiveFavoriteState()
+            }
+        }
+    }
+
+    /// 导航完成后同步胶囊收藏态；菜单内的收藏动作也会触发一次。
+    func refreshImmersiveFavoriteState() {
+        guard let url = favoriteEntryURL else { return }
+        immersiveExitControl.isFavorited = ServiceLocator.favorite.findFavorite(url: url) != nil
+    }
+
+    func refreshImmersiveMenuVisibility() {
+        let shouldShowMenu = hideNavBar && viewModel.managedHTMLAppID != nil
+        immersiveMenuButton.isHidden = !shouldShowMenu
+        immersiveMenuButton.isUserInteractionEnabled = shouldShowMenu
+        if shouldShowMenu {
+            view.bringSubviewToFront(immersiveMenuButton)
+        }
+    }
+
+    // MARK: - Bind ViewModel
+
+    public override func bindViewModel() {
+        webView.navigationDelegate = self
+        WebBridgeLogger.shared.info("[TOOL] bindViewModel - navigationDelegate set")
+
+        let output = viewModel.transform(input: WebBrowserViewModel.Input(
+            loadURL: .empty(),
+            goBack: backButton.rx.tap.asDriver(),
+            goForward: .empty(),
+            reload: .empty(),
+            stopLoading: .empty(),
+            bookmarkToggle: .empty(),
+            menuTap: menuButton.rx.tap.asDriver()
+        ))
+
+        output.title
+            .drive(onNext: { [weak self] title in
+                if title == "localhost" {
+                    self?.titleLabel.text = ""
+                } else {
+                    self?.titleLabel.text = title ?? NSLocalizedString("Browser", comment: "")
+                }
+            })
+            .disposed(by: rx)
+
+        // scheme-handler 交付页面文档不触发导航代理回调，页面间跳转历史
+        // 靠该通知维护（customNavStack），返回按钮据此出现。
+        NotificationCenter.default.rx.notification(ManifestURLSchemeHandler.didLoadDocumentNotification)
+            .observe(on: MainScheduler.instance)
+            .subscribe(onNext: { [weak self] note in
+                guard let self else { return }
+                let relative = note.userInfo?["relativePath"] as? String ?? ""
+                guard !relative.isEmpty else { return }
+                let base = self.customNavStack.last ?? self.currentURL
+                guard let base,
+                      let real = URL(string: relative, relativeTo: base.deletingLastPathComponent())?.absoluteURL,
+                      real != self.customNavStack.last else { return }
+                if self.customNavStack.isEmpty { self.customNavStack = [base] }
+                self.customNavStack.append(real)
+                let canGoBack = self.webView.canGoBack || self.customNavStack.count > 1
+                self.backBarButton?.isEnabled = canGoBack
+                self.backBarButton?.tintColor = canGoBack ? ThemeTokens.Color.text : .clear
+                self.navigationItem.prompt = nil
+            })
+            .disposed(by: rx)
+
+        output.canGoBack
+            .drive(onNext: { [weak self] canGoBack in
+                guard let self = self else { return }
+
+                if canGoBack {
+                    self.backBarButton?.isEnabled = true
+                    self.backBarButton?.tintColor = ThemeTokens.Color.text
+                } else {
+                    self.backBarButton?.isEnabled = false
+                    self.backBarButton?.tintColor = .clear
+                }
+
+            })
+            .disposed(by: rx)
+
+        output.estimatedProgress
+            .drive(onNext: { [weak self] progress in
+                self?.progressView.setProgress(Float(progress), animated: true)
+                self?.progressView.isHidden = progress >= 1.0
+            })
+            .disposed(by: rx)
+
+        output.showMenu
+            .drive(onNext: { [weak self] in
+                self?.showMenu()
+            })
+            .disposed(by: rx)
+
+        output.url
+            .drive(onNext: { [weak self] url in
+                self?.currentURL = url
+            })
+            .disposed(by: rx)
+
+    }
+
+    // MARK: - Deinit
+
+    deinit {
+        viewModel.endManagedHTMLAppSession()
+        webView.stopLoading()
+
+        for handlerName in registeredHandlerNames {
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: handlerName)
+        }
+        registeredHandlerNames.removeAll()
+
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+
+        _ = rx
+
+        webView.removeFromSuperview()
+
+        isViewModelBinded = false
+
+        StructuredLogger.shared.debug("[CLEAN] [WebBrowserVC] Cleaned up with proper memory management", category: .ui)
+    }
+}
+
+/// 缓存角标专用标签：水平内边距让胶囊紧贴文字（替代旧的固定 60pt 宽 +
+/// 左对齐导致的"LIVE 偏左漂、CHECKING 溢出"问题）。
+final class PaddedStatusLabel: UILabel {
+    private let horizontalPadding: CGFloat = 6
+
+    override func drawText(in rect: CGRect) {
+        let inset = CGRect(
+            x: rect.minX + horizontalPadding,
+            y: rect.minY,
+            width: rect.width - horizontalPadding * 2,
+            height: rect.height
+        )
+        super.drawText(in: inset)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: size.width + horizontalPadding * 2, height: size.height)
+    }
+}

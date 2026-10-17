@@ -1,0 +1,449 @@
+import Foundation
+
+// MARK: - MessageEngineProtocol
+
+public protocol MessageEngineProtocol: AnyObject {
+    func registerChannel(_ channel: any MessageChannel) async
+    func unregisterChannel(_ channelId: String) async
+    func getRegisteredChannels() async -> [String]
+    func setPipeline(_ pipeline: MessageProcessorPipeline) async
+    func setStore(_ store: any MessageStore) async
+    func registerHandler(_ handler: MessageHandler, forCategory category: String) async
+    func startAll() async
+    func stopAll() async
+    func send(_ payload: MessagePayload, through channelId: String) async throws -> MessageSendResult
+    func receive(_ payload: MessagePayload) async throws
+    func getMessages() async -> [StoredMessage]
+    func getUnreadMessages() async -> [StoredMessage]
+    func getUnreadCount() async -> Int
+    func markAsRead(id: String) async
+    func deleteMessage(id: String) async
+    func clearAllMessages() async
+    func getStatistics() async -> MessageStatistics
+}
+
+/// Central message engine that coordinates channels, routing, and persistence
+public actor MessageEngine: MessageEngineProtocol {
+    /// Shared singleton
+    public static let shared = MessageEngine()
+
+    private var channels: [String: any MessageChannel] = [:]
+    private var store: any MessageStore
+    private var router: MessageRouter
+    private var handlers: [String: MessageHandler] = [:]
+    private var statistics: MessageStatistics
+    private var pipeline: MessageProcessorPipeline?
+
+    /// Message received callback
+    public var onMessageReceived: (@Sendable (StoredMessage) -> Void)?
+
+    /// Store-changed callback: fired after every receive / mark-as-read /
+    /// delete / clear so badge surfaces (tab bar, app icon) can resync
+    /// immediately instead of relying on polling timers.
+    public var onStoreChanged: (@Sendable () -> Void)?
+
+    /// In-process broadcast of the same event, for surfaces the single
+    /// callback slot cannot serve (inbox list refresh, widgets, …).
+    /// Observers must hop to the main thread themselves.
+    public static let storeDidChangeNotification = Notification.Name("WebBridgeKitMessageStoreDidChange")
+
+    /// Set the message received callback from outside the actor
+    public func setOnMessageReceived(_ callback: (@Sendable (StoredMessage) -> Void)?) {
+        onMessageReceived = callback
+    }
+
+    /// Set the store-changed callback from outside the actor
+    public func setOnStoreChanged(_ callback: (@Sendable () -> Void)?) {
+        onStoreChanged = callback
+    }
+
+    private func notifyStoreChanged() {
+        onStoreChanged?()
+        NotificationCenter.default.post(name: Self.storeDidChangeNotification, object: nil)
+    }
+
+    /// Set the route callback from outside the actor
+    public func setOnRoute(_ callback: (@Sendable (MessagePayload, RouteTarget) -> Void)?) {
+        onRoute = callback
+    }
+
+    /// Route callback
+    public var onRoute: (@Sendable (MessagePayload, RouteTarget) -> Void)?
+
+    private init() {
+        self.store = InMemoryMessageStore()
+        self.router = MessageRouter()
+        self.statistics = MessageStatistics()
+    }
+
+    // MARK: - Channel Management
+
+    /// Register a message channel
+    public func registerChannel(_ channel: any MessageChannel) {
+        channels[channel.channelId] = channel
+    }
+
+    /// Unregister a channel
+    public func unregisterChannel(_ channelId: String) {
+        channels.removeValue(forKey: channelId)
+    }
+
+    /// Get all registered channels
+    public func getRegisteredChannels() -> [String] {
+        Array(channels.keys)
+    }
+
+    // MARK: - Pipeline Management
+
+    /// Set the processor pipeline
+    public func setPipeline(_ pipeline: MessageProcessorPipeline) {
+        self.pipeline = pipeline
+    }
+
+    // MARK: - Store Management
+
+    /// Set custom message store
+    public func setStore(_ store: any MessageStore) {
+        self.store = store
+    }
+
+    // MARK: - Handler Management
+
+    /// Register a message handler for specific categories
+    public func registerHandler(_ handler: MessageHandler, forCategory category: String) {
+        handlers[category] = handler
+    }
+
+    // MARK: - Core Operations
+
+    /// Start all registered channels
+    public func startAll() async {
+        for (_, channel) in channels {
+            await channel.start()
+        }
+    }
+
+    /// Stop all registered channels
+    public func stopAll() async {
+        for (_, channel) in channels {
+            await channel.stop()
+        }
+    }
+
+    /// Send a message through specified channel
+    public func send(_ payload: MessagePayload, through channelId: String) async throws -> MessageSendResult {
+        guard let channel = channels[channelId] else {
+            throw MessageError.channelNotConfigured(channelId: channelId)
+        }
+
+        guard channel.isActive else {
+            throw MessageError.channelNotActive(channelId: channelId)
+        }
+
+        let result = try await channel.send(payload)
+
+        switch result {
+        case .success:
+            statistics.recordSent(channelId: channelId)
+        case .failed:
+            statistics.recordFailed(channelId: channelId)
+        case .queued:
+            statistics.recordQueued(channelId: channelId)
+        }
+
+        return result
+    }
+
+    /// Receive and process an incoming message
+    public func receive(_ payload: MessagePayload) async throws {
+        let existingMessage = await findExistingMessage(for: payload)
+
+        if let existingMessage,
+           let currentRevision = existingMessage.payload.revision,
+           let incomingRevision = payload.revision,
+           incomingRevision < currentRevision {
+            return
+        }
+
+        if payload.isDeleted == true {
+            if let existingMessage {
+                await store.delete(id: existingMessage.id)
+            }
+            statistics.recordReceived(channelId: payload.channel)
+            notifyStoreChanged()
+            return
+        }
+
+        let initialBodyType: MessageBodyType = payload.contentType == .markdown || payload.markdown != nil
+            ? .markdown
+            : .plainText
+        var bodyType = initialBodyType.rawValue
+        var content = MutableMessageContent(
+            title: payload.title,
+            subtitle: payload.subtitle,
+            body: payload.body,
+            bodyType: initialBodyType,
+            sound: payload.sound,
+            badge: payload.badge,
+            group: payload.group,
+            threadId: payload.threadId,
+            targetURL: payload.targetURL,
+            targetAppId: payload.targetAppId,
+            route: payload.route,
+            targetMode: payload.targetMode,
+            imageURL: payload.imageURL,
+            iconURL: payload.iconURL,
+            level: payload.interruptionLevel ?? .active,
+            isAutoCopy: payload.isAutoCopy ?? false,
+            copyText: payload.copyText,
+            isArchive: payload.isArchive ?? true,
+            isCall: payload.isCall ?? false,
+            volume: payload.soundVolume,
+            ttl: payload.ttl,
+            replacementID: payload.replacementID,
+            isDeleted: payload.isDeleted ?? false,
+            userInfo: payload.userInfo ?? [:]
+        )
+        
+        // Process through pipeline if available
+        if let pipeline = pipeline {
+            content = try await pipeline.process(content: content)
+            bodyType = content.bodyType.rawValue
+        }
+        
+        // Store the message with bodyType
+        let storedMessage = StoredMessage(
+            id: existingMessage?.id ?? UUID().uuidString,
+            payload: payload,
+            isRead: existingMessage?.isRead ?? false,
+            readAt: existingMessage?.readAt,
+            receivedAt: existingMessage?.receivedAt ?? Date(),
+            bodyType: bodyType
+        )
+        try await store.save(storedMessage)
+
+        statistics.recordReceived(channelId: payload.channel)
+        notifyStoreChanged()
+
+        // Notify handlers
+        if let category = payload.category, let handler = handlers[category] {
+            handler.handle(storedMessage)
+        }
+        
+        // Route if needed
+        if content.targetURL != nil || content.targetAppId != nil {
+            let target = router.route(payload: payload)
+            onRoute?(payload, target)
+        }
+        
+        onMessageReceived?(storedMessage)
+    }
+
+    private func findExistingMessage(for payload: MessagePayload) async -> StoredMessage? {
+        let messages = await store.getAll()
+        let identity = payload.updateIdentity
+        return messages.first { message in
+            message.payload.updateIdentity == identity || message.payload.id == payload.id
+        }
+    }
+
+    // MARK: - Query Operations
+
+    /// Get all stored messages
+    public func getMessages() async -> [StoredMessage] {
+        await store.getAll()
+    }
+
+    /// Get unread messages
+    public func getUnreadMessages() async -> [StoredMessage] {
+        await store.getUnread()
+    }
+
+    /// Get unread count
+    public func getUnreadCount() async -> Int {
+        await store.getUnreadCount()
+    }
+
+    /// Mark message as read
+    public func markAsRead(id: String) async {
+        await store.markAsRead(id: id)
+        notifyStoreChanged()
+    }
+
+    /// Delete a message
+    public func deleteMessage(id: String) async {
+        await store.delete(id: id)
+        notifyStoreChanged()
+    }
+
+    /// Clear all messages
+    public func clearAllMessages() async {
+        await store.deleteAll()
+        statistics.reset()
+        notifyStoreChanged()
+    }
+
+    // MARK: - Statistics
+
+    /// Get engine statistics
+    public func getStatistics() -> MessageStatistics {
+        statistics
+    }
+}
+
+// MARK: - Supporting Types
+
+/// Message routing target
+public struct RouteTarget: Sendable {
+    public let type: RouteType
+    public let destination: String
+    public let mode: String?
+    public let params: [String: String]?
+
+    public init(type: RouteType, destination: String, mode: String? = nil, params: [String: String]? = nil) {
+        self.type = type
+        self.destination = destination
+        self.mode = mode
+        self.params = params
+    }
+}
+
+/// Route type
+public enum RouteType: String, Sendable {
+    case url        // Open URL in browser
+    case appId      // Open mini app
+    case deeplink   // Deep link
+    case none       // No routing
+}
+
+/// Message handler protocol
+public protocol MessageHandler: AnyObject, Sendable {
+    func handle(_ message: StoredMessage)
+}
+
+/// Message statistics
+public struct MessageStatistics: Codable, Sendable {
+    public var totalReceived: UInt64
+    public var totalSent: UInt64
+    public var totalFailed: UInt64
+    public var totalQueued: UInt64
+    public var byChannel: [String: ChannelStats]
+    public var lastUpdated: Date
+
+    public init() {
+        self.totalReceived = 0
+        self.totalSent = 0
+        self.totalFailed = 0
+        self.totalQueued = 0
+        self.byChannel = [:]
+        self.lastUpdated = Date()
+    }
+
+    public mutating func recordReceived(channelId: String) {
+        totalReceived += 1
+        byChannel[channelId, default: ChannelStats()].received += 1
+        lastUpdated = Date()
+    }
+
+    public mutating func recordSent(channelId: String) {
+        totalSent += 1
+        byChannel[channelId, default: ChannelStats()].sent += 1
+        lastUpdated = Date()
+    }
+
+    public mutating func recordFailed(channelId: String) {
+        totalFailed += 1
+        byChannel[channelId, default: ChannelStats()].failed += 1
+        lastUpdated = Date()
+    }
+
+    public mutating func recordQueued(channelId: String) {
+        totalQueued += 1
+        byChannel[channelId, default: ChannelStats()].queued += 1
+        lastUpdated = Date()
+    }
+
+    public mutating func reset() {
+        totalReceived = 0
+        totalSent = 0
+        totalFailed = 0
+        totalQueued = 0
+        byChannel = [:]
+        lastUpdated = Date()
+    }
+}
+
+/// Channel-level statistics
+public struct ChannelStats: Codable, Sendable {
+    public var received: UInt64
+    public var sent: UInt64
+    public var failed: UInt64
+    public var queued: UInt64
+
+    public init(received: UInt64 = 0, sent: UInt64 = 0, failed: UInt64 = 0, queued: UInt64 = 0) {
+        self.received = received
+        self.sent = sent
+        self.failed = failed
+        self.queued = queued
+    }
+}
+
+// MARK: - InMemoryMessageStore (default implementation)
+
+/// Default in-memory message store
+public actor InMemoryMessageStore: MessageStore {
+    private var messages: [String: StoredMessage] = [:]
+
+    public init() {}
+
+    public func save(_ message: StoredMessage) async throws {
+        messages.removeValue(forKey: message.id)
+        messages[message.id] = message
+    }
+
+    public func get(id: String) async -> StoredMessage? {
+        messages[id]
+    }
+
+    public func getAll() async -> [StoredMessage] {
+        messages.values.sorted { $0.receivedAt > $1.receivedAt }
+    }
+
+    public func getByChannel(_ channel: String) async -> [StoredMessage] {
+        messages.values
+            .filter { $0.payload.channel == channel }
+            .sorted { $0.receivedAt > $1.receivedAt }
+    }
+
+    public func getUnread() async -> [StoredMessage] {
+        messages.values
+            .filter { !$0.isRead }
+            .sorted { $0.receivedAt > $1.receivedAt }
+    }
+
+    public func getUnreadCount() async -> Int {
+        messages.values.filter { !$0.isRead }.count
+    }
+
+    public func markAsRead(id: String) async {
+        messages[id]?.markRead()
+    }
+
+    public func markAllAsRead() async {
+        for id in messages.keys {
+            messages[id]?.markRead()
+        }
+    }
+
+    public func delete(id: String) async {
+        messages.removeValue(forKey: id)
+    }
+
+    public func deleteAll() async {
+        messages.removeAll()
+    }
+
+    public func count() async -> Int {
+        messages.count
+    }
+}

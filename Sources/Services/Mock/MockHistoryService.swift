@@ -1,0 +1,251 @@
+//
+//  MockHistoryService.swift
+//  WebBridgeKit
+//
+//  Created on 2025-01-30.
+//  Copyright © 2025年 WebBridgeKit. All rights reserved.
+//
+
+import Foundation
+import RealmSwift
+
+/// Mock 历史记录服务
+/// 用于测试和开发，提供内存中的数据存储
+public class MockHistoryService: HistoryServiceProtocol {
+
+    public static let shared = MockHistoryService()
+
+    /// 内存中的历史记录存储
+    private var mockHistories: [String: WebPageHistory] = [:]
+    /// 是否使用 Realm 内存数据库
+    private let useInMemoryRealm: Bool
+    /// Realm 配置
+    private let realmConfiguration: Realm.Configuration
+    /// 共享的 Realm 实例（确保数据一致性）
+    private let sharedRealm: Realm?
+
+    /// 指定初始化方法
+    /// - Parameter useInMemoryRealm: 是否使用 Realm 内存数据库，默认使用内存字典
+    public init(useInMemoryRealm: Bool = false) {
+        self.useInMemoryRealm = useInMemoryRealm
+        if useInMemoryRealm {
+            self.realmConfiguration = Realm.Configuration(inMemoryIdentifier: "MockHistoryRealm")
+            self.sharedRealm = try? Realm(configuration: realmConfiguration)
+            StructuredLogger.shared.info("[SEARCH] [MockHistoryService] Initialized with in-memory Realm, success: \(sharedRealm != nil)", category: .general)
+        } else {
+            // 创建一个无效配置，强制使用内存存储
+            self.realmConfiguration = Realm.Configuration(fileURL: URL(fileURLWithPath: "/dev/null/mock.realm"))
+            self.sharedRealm = nil
+            StructuredLogger.shared.debug("[SEARCH] [MockHistoryService] Initialized with dictionary storage", category: .general)
+        }
+    }
+
+    /// 获取 Realm 实例（仅在使用 in-memory 模式时有效）
+    private func getRealm() -> Realm? {
+        return sharedRealm
+    }
+
+    // MARK: - 添加/更新
+
+    public func addOrUpdateHistory(url: URL, title: String?, favicon: Data?) {
+        let urlString = url.absoluteString
+
+        if useInMemoryRealm, let realm = getRealm() {
+            // 使用 Realm 内存数据库
+            let existing = realm.objects(WebPageHistory.self).first(where: { $0.url == urlString })
+
+            try? realm.write {
+                if let existing = existing {
+                    existing.lastVisitDate = Date()
+                    existing.visitCount += 1
+                    if let title = title, existing.title == nil {
+                        existing.title = title
+                    }
+                    if let favicon = favicon, existing.favicon == nil {
+                        existing.favicon = favicon
+                    }
+                    StructuredLogger.shared.debug("[SEARCH] [MockHistoryService] Updated history: \(urlString)", category: .general)
+                } else {
+                    let history = WebPageHistory()
+                    history.id = UUID().uuidString
+                    history.url = urlString
+                    history.title = title
+                    history.favicon = favicon
+                    history.visitCount = 1
+                    history.lastVisitDate = Date()
+                    realm.add(history)
+                    StructuredLogger.shared.debug("[SEARCH] [MockHistoryService] Added history: \(urlString), total count: \(realm.objects(WebPageHistory.self).count)", category: .general)
+                }
+            }
+        } else {
+            // 使用内存字典
+            if let existing = mockHistories[urlString] {
+                existing.lastVisitDate = Date()
+                existing.visitCount += 1
+                if let title = title, existing.title == nil {
+                    existing.title = title
+                }
+                if let favicon = favicon, existing.favicon == nil {
+                    existing.favicon = favicon
+                }
+            } else {
+                let history = WebPageHistory()
+                history.id = UUID().uuidString
+                history.url = urlString
+                history.title = title
+                history.favicon = favicon
+                history.visitCount = 1
+                history.lastVisitDate = Date()
+                mockHistories[urlString] = history
+            }
+        }
+    }
+
+    // MARK: - 删除
+
+    public func deleteHistory(id: String) {
+        if useInMemoryRealm, let realm = getRealm() {
+            if let history = realm.object(ofType: WebPageHistory.self, forPrimaryKey: id) {
+                try? realm.write {
+                    realm.delete(history)
+                }
+            }
+        } else {
+            if let key = mockHistories.first(where: { $0.value.id == id })?.key {
+                mockHistories.removeValue(forKey: key)
+            }
+        }
+    }
+
+    public func clearAllHistory() {
+        if useInMemoryRealm, let realm = getRealm() {
+            try? realm.write {
+                realm.deleteAll()
+            }
+        } else {
+            mockHistories.removeAll()
+        }
+    }
+
+    // MARK: - 查询
+
+    public func getAllHistories() -> [WebPageHistory] {
+        if useInMemoryRealm, let realm = getRealm() {
+            let results = realm.objects(WebPageHistory.self)
+                .sorted(byKeyPath: "lastVisitDate", ascending: false)
+            StructuredLogger.shared.debug("[SEARCH] [MockHistoryService] getAllHistories: useInMemoryRealm=true, count: \(results.count)", category: .general)
+            return Array(results).map { WebPageHistory(value: $0) }
+        }
+
+        StructuredLogger.shared.debug("[SEARCH] [MockHistoryService] getAllHistories: useInMemoryRealm=false, returning array from dictionary", category: .general)
+        return Array(mockHistories.values)
+            .sorted { $0.lastVisitDate > $1.lastVisitDate }
+    }
+
+    /// 获取所有历史记录的数组形式（用于 Mock 模式）
+    public func getAllHistoriesArray() -> [WebPageHistory] {
+        return getAllHistories()
+    }
+
+    public func getCachedHistories() -> [WebPageHistory] {
+        if useInMemoryRealm, let realm = getRealm() {
+            return Array(realm.objects(WebPageHistory.self)
+                            .filter("isCached == true")
+                            .sorted(byKeyPath: "cacheDate", ascending: false))
+                .map { WebPageHistory(value: $0) }
+        }
+
+        return Array(mockHistories.values)
+            .filter { $0.isCached }
+            .sorted { ($0.cacheDate ?? Date.distantPast) > ($1.cacheDate ?? Date.distantPast) }
+    }
+
+    public func findHistory(url: URL) -> WebPageHistory? {
+        let urlString = url.absoluteString
+
+        if useInMemoryRealm, let realm = getRealm() {
+            return realm.objects(WebPageHistory.self).first(where: { $0.url == urlString })
+        }
+
+        return mockHistories[urlString]
+    }
+
+    public func findHistory(id: String) -> WebPageHistory? {
+        if useInMemoryRealm, let realm = getRealm() {
+            return realm.object(ofType: WebPageHistory.self, forPrimaryKey: id)
+        }
+
+        return mockHistories.values.first { $0.id == id }
+    }
+
+    public func searchHistories(keyword: String) -> [WebPageHistory] {
+        if useInMemoryRealm, let realm = getRealm() {
+            return Array(realm.objects(WebPageHistory.self)
+                            .filter("url CONTAINS[c] %@ OR title CONTAINS[c] %@", keyword, keyword)
+                            .sorted(byKeyPath: "lastVisitDate", ascending: false))
+                .map { WebPageHistory(value: $0) }
+        }
+
+        return mockHistories.values
+            .filter { history in
+                history.url.localizedCaseInsensitiveContains(keyword) ||
+                    (history.title?.localizedCaseInsensitiveContains(keyword) ?? false)
+            }
+            .sorted { $0.lastVisitDate > $1.lastVisitDate }
+    }
+
+    // MARK: - 统计
+
+    public func getTotalCount() -> Int {
+        if useInMemoryRealm, let realm = getRealm() {
+            return realm.objects(WebPageHistory.self).count
+        }
+        return mockHistories.count
+    }
+
+    public func getTodayVisitCount() -> Int {
+        let today = Calendar.current.startOfDay(for: Date())
+
+        if useInMemoryRealm, let realm = getRealm() {
+            return realm.objects(WebPageHistory.self)
+                .filter("lastVisitDate >= %@", today as NSDate)
+                .count
+        }
+
+        return mockHistories.values
+            .filter { $0.lastVisitDate >= today }
+            .count
+    }
+
+    public func getMostVisited(limit: Int = 10) -> [WebPageHistory] {
+        if useInMemoryRealm, let realm = getRealm() {
+            return Array(realm.objects(WebPageHistory.self)
+                            .sorted(byKeyPath: "visitCount", ascending: false)
+                            .prefix(limit))
+        }
+
+        return mockHistories.values
+            .sorted { $0.visitCount > $1.visitCount }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    // MARK: - 测试辅助方法
+
+    /// 添加 Mock 数据（用于测试）
+    public func addMockData(urls: [String], titles: [String]? = nil) {
+        for (index, url) in urls.enumerated() {
+            guard let urlObject = URL(string: url) else {
+                StructuredLogger.shared.warning("[WARN] [MockHistoryService] Invalid URL: \(url)", category: .general)
+                continue
+            }
+            let title = titles?.indices.contains(index) == true ? titles?[index] : "Mock: \(url)"
+            addOrUpdateHistory(url: urlObject, title: title, favicon: nil)
+        }
+    }
+
+    /// 清空所有 Mock 数据
+    public func clearMockData() {
+        clearAllHistory()
+    }
+}

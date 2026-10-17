@@ -1,0 +1,166 @@
+# Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+build/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+playground.xcworkspace
+
+# XcodeGen - project.yml is the source of truth, xcodeproj is generated
+*.xcodeproj/
+*.xcworkspace/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Icon
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Build artifacts
+*.log
+*.xcarchive
+*.xcresult/
+*.backup
+*.bak
+*~
+build_custom*/
+build_*/
+
+# AI/Tool generated temporary files
+*.py
+*.example
+*.patch
+manifest_cache_demo
+inject_pinned_data.swift
+
+# Node/Testing
+node_modules/
+test-results/
+test_resources/*
+!test_resources/pwa-notification/
+!test_resources/pwa-notification/**
+!test_resources/pwa-agent-console/
+!test_resources/pwa-agent-console/**
+!test_resources/pwa-permission/
+!test_resources/pwa-permission/**
+!test_resources/cache-html-validation/
+!test_resources/cache-html-validation/**
+!test_resources/app-icons/
+!test_resources/app-icons/**
+!test_resources/offline-package/
+!test_resources/offline-package/**
+package.json
+!test_resources/offline-package/package.json
+package-lock.json
+tsconfig.json
+vitest.config.ts
+playwright.config.ts
+
+# IDE
+.idea/
+iOSInjectionProject/
+
+# AI agent config (local only)
+.claude/
+.codenomad/
+.trae/
+
+# AI-generated process documentation (keep only README.md and docs/)
+*_SUMMARY.md
+*_REPORT.md
+*_GUIDE.md
+*_CHECKLIST.md
+*_QUICKSTART.md
+*_REFERENCE.md
+*_QUICK_START.md
+*_DETAILED.md
+*_COMPLETED.md
+*_RECOMMENDATIONS.md
+*_PLAN*.md
+*_STATUS*.md
+CACHE_RESOURCE_*.md
+TASK_*_IMPLEMENTATION_SUMMARY.md
+CREATION_SUMMARY.md
+PROJECT_REPORT.md
+PROJECT_SETUP.md
+PROJECT_ARCHITECTURE_ANALYSIS.md
+PROJECT_OPTIMIZATION_RECOMMENDATIONS.md
+DEMO_APP_FEATURES.md
+FRAMEWORK_FEATURES.md
+PERFORMANCE_MONITORING.md
+TEST_SUITE_README.md
+TEST_EXECUTION_MANUAL.md
+MANIFEST_CACHE_TEST_PLAN.md
+
+# Test output
+TestResults_*/*
+.services/
+
+# Agent tooling
+.opencode/
+.ui-tester/
+.xcodebuildmcp/
+docs/design-tokens-v2-backup.json
+
+# local agent state and runtime data
+.brainstorm/
+.data/
+.uploads/
+Server/data/
+Server/secrets/
+Server/pairing-*.png
+!test_resources/push-render-catalog.html
+# Native self-hosted relay output
+Server/native/dist/
+
+# local agent artifacts
+.playwright-cli/
+.zcode/
+tools/__pycache__/
+
+# App Store Connect API keys must never enter the repo (they live in ~/.appstoreconnect/)
+*.p8
+*.mobileprovision
