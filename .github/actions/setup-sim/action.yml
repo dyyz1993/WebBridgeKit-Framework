@@ -1,0 +1,82 @@
+name: 'Setup iOS Simulator'
+description: 'Create and boot an iOS simulator for testing'
+inputs:
+  device-type:
+    description: 'Simulator device type (e.g. "iPhone 16 Pro")'
+    required: false
+    default: 'iPhone 16 Pro'
+  sim-name:
+    description: 'Name for the simulator'
+    required: false
+    default: 'CI-iPhone'
+outputs:
+  device-id:
+    description: 'Created simulator UDID'
+    value: ${{ steps.create.outputs.device_id }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Create Simulator
+      id: create
+      shell: bash
+      run: |
+        xcrun simctl list runtimes available | grep iOS
+
+        RUNTIME_ID=$(xcrun simctl list runtimes available -j 2>/dev/null | python3 -c "
+        import json, sys
+        data = json.load(sys.stdin)
+        for rt in data.get('runtimes', []):
+            ident = rt.get('identifier', '')
+            if 'iOS' in ident and rt.get('isAvailable', False):
+                print(ident)
+                break
+        " 2>/dev/null)
+
+        if [ -z "$RUNTIME_ID" ]; then
+          RUNTIME_ID=$(xcrun simctl list runtimes available | grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.iOS[^ ]+' | head -1)
+        fi
+
+        if [ -z "$RUNTIME_ID" ]; then
+          RUNTIME_LINE=$(xcrun simctl list runtimes available | grep "iOS" | head -1)
+          echo "Available runtime line: $RUNTIME_LINE"
+          RUNTIME_ID=$(echo "$RUNTIME_LINE" | grep -oE '[A-F0-9-]{36}' | head -1)
+        fi
+
+        if [ -z "$RUNTIME_ID" ]; then
+          IOS_VERSION=$(xcrun simctl list runtimes | grep "iOS" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          RUNTIME_ID="com.apple.CoreSimulator.SimRuntime.iOS-${IOS_VERSION//./-}"
+        fi
+
+        if [ -z "$RUNTIME_ID" ]; then
+          echo "ERROR: No iOS runtime found"
+          xcrun simctl list runtimes
+          exit 1
+        fi
+
+        echo "Using runtime: $RUNTIME_ID"
+
+        DEVICE_ID=$(xcrun simctl create "${{ inputs.sim-name }}" "${{ inputs.device-type }}" "$RUNTIME_ID")
+        if [ $? -ne 0 ]; then
+          echo "ERROR: Failed to create simulator"
+          xcrun simctl list devicetypes | grep -i "iphone"
+          exit 1
+        fi
+
+        echo "device_id=$DEVICE_ID" >> $GITHUB_OUTPUT
+        echo "Created simulator: $DEVICE_ID with runtime $RUNTIME_ID"
+
+    - name: Boot Simulator
+      shell: bash
+      run: |
+        xcrun simctl boot "${{ steps.create.outputs.device_id }}" 2>/dev/null || true
+        echo "Simulator booted: ${{ steps.create.outputs.device_id }}"
+
+    - name: Wait for Simulator Ready
+      shell: bash
+      run: |
+        elapsed=0
+        while ! xcrun simctl list devices booted | grep -q "${{ inputs.sim-name }}" && [ $elapsed -lt 60 ]; do
+          sleep 2
+          elapsed=$((elapsed + 2))
+        done
+        echo "Simulator ready"

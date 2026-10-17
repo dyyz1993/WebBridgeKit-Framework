@@ -1,0 +1,69 @@
+PODS:
+  - Alamofire (5.11.0)
+  - Differentiator (5.0.0)
+  - Moya/Core (15.0.0):
+    - Alamofire (~> 5.0)
+  - Moya/RxSwift (15.0.0):
+    - Moya/Core
+    - RxSwift (~> 6.0)
+  - Realm (10.54.6):
+    - Realm/Headers (= 10.54.6)
+  - Realm/Headers (10.54.6)
+  - RealmSwift (10.54.6):
+    - Realm (= 10.54.6)
+  - RxCocoa (6.9.0):
+    - RxRelay (= 6.9.0)
+    - RxSwift (= 6.9.0)
+  - RxDataSources (5.0.0):
+    - Differentiator (~> 5.0)
+    - RxCocoa (~> 6.0)
+    - RxSwift (~> 6.0)
+  - RxRelay (6.9.0):
+    - RxSwift (= 6.9.0)
+  - RxSwift (6.9.0)
+  - SnapKit (5.7.1)
+  - SwiftSoup (2.11.3)
+  - ZIPFoundation (0.9.20)
+
+DEPENDENCIES:
+  - Moya/RxSwift (~> 15.0)
+  - RealmSwift (~> 10.42)
+  - RxCocoa (~> 6.0)
+  - RxDataSources (~> 5.0)
+  - RxSwift (~> 6.0)
+  - SnapKit
+  - SwiftSoup (~> 2.6)
+  - ZIPFoundation (~> 0.9)
+
+SPEC REPOS:
+  trunk:
+    - Alamofire
+    - Differentiator
+    - Moya
+    - Realm
+    - RealmSwift
+    - RxCocoa
+    - RxDataSources
+    - RxRelay
+    - RxSwift
+    - SnapKit
+    - SwiftSoup
+    - ZIPFoundation
+
+SPEC CHECKSUMS:
+  Alamofire: bd5e7b23a1a750975288482c1831d71e74415f86
+  Differentiator: e8497ceab83c1b10ca233716d547b9af21b9344d
+  Moya: 138f0573e53411fb3dc17016add0b748dfbd78ee
+  Realm: b1b3bc68162fa242132eb7eefbf91d7c40f36a85
+  RealmSwift: 456cfd82a4f23dff8e3456980999331ab69bbf3e
+  RxCocoa: ac16414696ae706516be3e1ab00fcce5bdc9be8a
+  RxDataSources: aa47cc1ed6c500fa0dfecac5c979b723542d79cf
+  RxRelay: 6b0c930e5cef57d5fe2032571e5e65b78e3cbdb1
+  RxSwift: 31649ace6aceeb422e16ff71c60804f9c3281ed9
+  SnapKit: d612e99e678a2d3b95bf60b0705ed0a35c03484a
+  SwiftSoup: 959c9ac70d7053fbf476341bfac90ab228523f2a
+  ZIPFoundation: dfd3d681c4053ff7e2f7350bc4e53b5dba3f5351
+
+PODFILE CHECKSUM: 0855f6b75464f5c923666155be03d22fa7915854
+
+COCOAPODS: 1.16.2

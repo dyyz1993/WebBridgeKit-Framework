@@ -1,0 +1,820 @@
+//
+//  PersistentManifestLoader.swift
+//  WebBridgeKit
+//
+//  Created by Claude on 2025-02-02.
+//  Copyright © 2025年 WebBridgeKit. All rights reserved.
+//
+
+import Foundation
+import WebKit
+import UIKit
+import CryptoKit
+
+/// 持久化 Manifest 加载器
+/// 实现完全离线缓存模式：
+/// 1. 检查 manifest.json 的 persistent 字段
+/// 2. 如果为 true，下载所有资源到本地缓存
+/// 3. 显示实时进度弹窗
+/// 4. 使用 loadHTMLString + wb-resource:// 加载
+public class PersistentManifestLoader: NSObject {
+
+    // MARK: - Types (defined in ManifestLoader/ManifestLoaderTypes.swift)
+    //
+    // Nested types are declared in extensions within:
+    //   - ManifestLoaderTypes.swift       (LoaderError, WebManifest, LoadingState)
+    //   - ManifestDownloadService.swift   (download & save methods)
+    //   - ManifestProgressUI.swift        (progress modal & WebView methods)
+
+    // MARK: - Properties
+
+    private(set) var urlSession: URLSession!
+    let cacheDirectory: URL
+    public let scheme = "wb-resource"
+    let manifestFileName = "manifest.json"
+
+    var progressModal: FullScreenProgressViewController?
+    private var loadingState: LoadingState = .idle
+    private let stateLock = NSLock()
+
+    var downloadTasks: [URLSessionDataTask] = []
+    let tasksLock = NSLock()
+
+    var urlToAppID: [URL: String] = [:]
+    let urlMappingLock = NSLock()
+
+    private var urlMappingKey: String { "com.webbridgekit.urlToCacheID" }
+
+    func diagnose(_ message: String) {
+        NSLog("[WEB-DIAG] %@", message)
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let logFile = docsDir.appendingPathComponent("diag.log")
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        let line = "[\(timestamp)] \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: logFile.path) {
+            if let handle = try? FileHandle(forWritingTo: logFile) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: logFile)
+        }
+    }
+
+    private func saveURLMapping(_ url: URL, cacheID: String) {
+        var mapping = UserDefaults.standard.dictionary(forKey: urlMappingKey) as? [String: String] ?? [:]
+        mapping[url.absoluteString] = cacheID
+        UserDefaults.standard.set(mapping, forKey: urlMappingKey)
+        NSLog("[WEB] [PersistentLoader] 保存URL映射: %@ → %@", url.absoluteString, cacheID)
+    }
+
+    private func getCacheIDForURL(_ url: URL) -> String? {
+        let mapping = UserDefaults.standard.dictionary(forKey: urlMappingKey) as? [String: String] ?? [:]
+        return mapping[url.absoluteString]
+    }
+
+    // MARK: - Singleton
+
+    public static let shared = PersistentManifestLoader()
+
+    // MARK: - Initialization
+
+    private override init() {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 120
+        config.httpMaximumConnectionsPerHost = 6
+        config.httpAdditionalHeaders = [
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        ]
+
+        let appSupportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        self.cacheDirectory = appSupportDir.appendingPathComponent("WebBridgeKit/PersistentCache")
+
+        try? FileManager.default.createDirectory(
+            at: appSupportDir.appendingPathComponent("WebBridgeKit"),
+            withIntermediateDirectories: true
+        )
+
+        super.init()
+
+        self.urlSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+
+        let oldCacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("WebBridgeKit/PersistentCache")
+        if FileManager.default.fileExists(atPath: oldCacheDir.path) {
+            let newCacheDir = cacheDirectory
+            if !FileManager.default.fileExists(atPath: newCacheDir.path) {
+                try? FileManager.default.createDirectory(at: newCacheDir, withIntermediateDirectories: true)
+            }
+            if let contents = try? FileManager.default.contentsOfDirectory(at: oldCacheDir, includingPropertiesForKeys: nil) {
+                for item in contents {
+                    let dest = newCacheDir.appendingPathComponent(item.lastPathComponent)
+                    if !FileManager.default.fileExists(atPath: dest.path) {
+                        try? FileManager.default.moveItem(at: item, to: dest)
+                    }
+                }
+            }
+            try? FileManager.default.removeItem(at: oldCacheDir)
+            diagnose("缓存迁移: Caches → Application Support 完成")
+        }
+
+        // NOTE: 不监听 .clearAllCaches 通知。
+        // PersistentCache 是持久化离线缓存，不应被 WebCacheManager.clearAll() 或 AppDelegate 启动清理删除。
+        // 仅通过用户显式操作（如 ManifestCacheTestViewController 中的按钮）调用 clearAllCache()。
+    }
+
+    @objc private func handleClearAllCaches() {
+        clearAllCache()
+    }
+
+    // MARK: - Public API
+
+    /// 加载持久化页面
+    /// - Parameters:
+    ///   - url: 页面 URL
+    ///   - webView: 目标 WebView
+    ///   - viewController: 用于显示进度弹窗的控制器
+    ///   - completion: 完成回调
+    public static func load(
+        url: URL,
+        in webView: WKWebView,
+        from viewController: UIViewController? = nil,
+        forceRefresh: Bool = false,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        Task { @MainActor in
+            do {
+                try await shared.loadPersistentPage(
+                    url: url,
+                    in: webView,
+                    from: viewController,
+                    forceRefresh: forceRefresh
+                )
+                completion(.success(()))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// 缓存命中前的健全性校验：内容像 HTML 且缓存版本与服务端 manifest 一致。
+    /// 版本不一致（服务端已升级）或内容异常（历史损坏写入）时返回 false，
+    /// 让调用方回退到完整下载路径，避免加载坏缓存导致白屏。
+    static func cachePayloadIsValid(html: String, cachedManifestPath: URL, freshManifest: WebManifest) -> Bool {
+        let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.hasPrefix("<") else {
+            NSLog("[WARN] [PersistentManifestLoader] 缓存 HTML 内容异常（非文档），视为损坏")
+            return false
+        }
+        guard let data = try? Data(contentsOf: cachedManifestPath),
+              let cached = try? JSONDecoder().decode(Manifest.self, from: data) else {
+            NSLog("[WARN] [PersistentManifestLoader] 缓存 manifest 无法解码，视为损坏")
+            return false
+        }
+        guard cached.resolvedVersion == freshManifest.resolvedVersion else {
+            NSLog("[SYNC] [PersistentManifestLoader] 缓存版本落后（%@ -> %@），重新下载",
+                  cached.resolvedVersion, freshManifest.resolvedVersion)
+            return false
+        }
+        return true
+    }
+
+    /// 检查 URL 是否支持持久化模式
+    /// - Parameter url: 页面 URL
+    /// - Returns: 是否支持持久化
+    public static func supportsPersistentMode(for url: URL) async -> Bool {
+        do {
+            let manifest = try await shared.fetchManifest(from: url)
+            return manifest.persistent
+        } catch {
+            return false
+        }
+    }
+
+    /// 获取缓存大小
+    /// - Parameter cacheID: 缓存 ID
+    /// - Returns: 缓存大小（字节）
+    public func getCacheSize(for cacheID: String) -> Int64 {
+        let cacheDir = cacheDirectory.appendingPathComponent(cacheID)
+        return calculateDirectorySize(at: cacheDir)
+    }
+
+    private func calculateDirectorySize(at url: URL) -> Int64 {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey], options: []) else {
+            return 0
+        }
+
+        var totalSize: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
+               let fileSize = resourceValues.fileSize {
+                totalSize += Int64(fileSize)
+            }
+        }
+        return totalSize
+    }
+
+    // MARK: - Private Implementation
+
+    /// 加载持久化页面的主流程
+    private func loadPersistentPage(
+        url: URL,
+        in webView: WKWebView,
+        from viewController: UIViewController?,
+        forceRefresh: Bool = false
+    ) async throws {
+        diagnose("loadPersistentPage 开始, URL: \(url.absoluteString)")
+        NSLog("[SYNC] [PersistentManifestLoader] 开始加载持久化页面")
+        NSLog("   URL: %@", url.absoluteString)
+        NSLog("   forceRefresh: %@", forceRefresh ? "true" : "false")
+        updateState(.fetchingManifest)
+
+        // 1. 下载 manifest.json
+        NSLog("[RECV] [PersistentManifestLoader] 步骤 1: 下载 manifest.json")
+        let manifest = try await fetchManifest(from: url)
+        diagnose("fetchManifest 成功, persistent: \(manifest.persistent), appid: \(manifest.appid ?? "nil"), resources: \(manifest.resources.count)")
+        NSLog("[OK] [PersistentManifestLoader] manifest.json 下载成功")
+        NSLog("   persistent: \(manifest.persistent)")
+        NSLog("   资源数量: \(manifest.resources.count)")
+        NSLog("   版本: \(manifest.resolvedVersion)")
+        NSLog("   AppID: \(manifest.appid ?? "使用域名")")
+        NSLog("   名称: \(manifest.name ?? "未设置")")
+
+        // 2. 检查是否启用持久化
+        guard manifest.persistent else {
+            diagnose("persistent=false，取消持久化加载")
+            NSLog("[FAIL] [PersistentManifestLoader] persistent=false，取消持久化加载")
+            updateState(.failed(LoaderError.persistentModeDisabled))
+            throw LoaderError.persistentModeDisabled
+        }
+
+        // 3. 生成缓存 ID（使用 AppID）
+        NSLog("🆔 [PersistentManifestLoader] 步骤 2: 生成缓存 ID (基于 AppID)")
+        let cacheID = generateCacheID(for: url, manifest: manifest)
+        diagnose("cacheID: \(cacheID)")
+
+        urlMappingLock.withLock {
+            urlToAppID[url] = cacheID
+        }
+
+        NSLog("   缓存 ID: %@", cacheID)
+        let cacheDir = cacheDirectory.appendingPathComponent(cacheID)
+        NSLog("   缓存目录: %@", cacheDir.path)
+
+        // 4. 确保缓存根目录存在（不创建具体的 cacheDir，等原子更新时创建）
+        NSLog("[DIR] [PersistentManifestLoader] 步骤 3: 确保缓存根目录存在")
+        createCacheDirectoryIfNeeded()
+        NSLog("[OK] [PersistentManifestLoader] 缓存根目录就绪")
+
+        // 4b. 清理上次失败残留的临时/备份目录
+        cleanupStaleDirectories(for: cacheID)
+
+        // 5. 检查是否已经缓存（跳过进度页面）
+        let htmlPath = cacheDir.appendingPathComponent("index.html")
+        let manifestPath = cacheDir.appendingPathComponent("manifest.json")
+
+        if !forceRefresh,
+           FileManager.default.fileExists(atPath: htmlPath.path),
+           FileManager.default.fileExists(atPath: manifestPath.path),
+           let html = try? String(contentsOfFile: htmlPath.path, encoding: .utf8),
+           Self.cachePayloadIsValid(html: html, cachedManifestPath: manifestPath, freshManifest: manifest) {
+            diagnose("缓存已存在, cacheID: \(cacheID), htmlPath: \(htmlPath.path)")
+            NSLog("[RECYCLE] [PersistentManifestLoader] 发现完整缓存，跳过下载")
+
+            do {
+                var finalManifest: Manifest
+                if let existing = ManifestStore.shared.getManifest(for: cacheID) {
+                    finalManifest = Manifest(
+                        resources: manifest.resources,
+                        version: manifest.version,
+                        lastUpdated: Date(),
+                        appid: manifest.appid,
+                        name: manifest.name,
+                        icon: manifest.icon,
+                        isPinned: existing.isPinned,
+                        isFavorite: existing.isFavorite,
+                        lastAccessed: Date(),
+                        accessCount: (existing.accessCount ?? 0) + 1
+                    )
+                } else {
+                    finalManifest = Manifest(
+                        resources: manifest.resources,
+                        version: manifest.version,
+                        lastUpdated: Date(),
+                        appid: manifest.appid,
+                        name: manifest.name,
+                        icon: manifest.icon,
+                        isPinned: false,
+                        isFavorite: false,
+                        lastAccessed: Date(),
+                        accessCount: 1
+                    )
+                }
+                ManifestStore.shared.saveManifest(finalManifest, for: cacheID)
+                ManifestStore.shared.saveHTML(html, for: cacheID)
+
+                await registerManifest(manifest, for: cacheID, in: webView)
+                try await loadHTML(html, cacheID: cacheID, in: webView)
+
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .manifestCacheHit,
+                        object: nil,
+                        userInfo: ["source": "MANIFEST"]
+                    )
+                }
+
+                diagnose("从缓存加载完成, html大小: \(html.count) bytes")
+                NSLog("[OK] [PersistentManifestLoader] 从缓存加载完成")
+                return
+            } catch {
+                // 缓存内容损坏（读取/解码失败）：清掉本目录，走下面的重新下载
+                NSLog("[WARN] [PersistentManifestLoader] 缓存内容异常，回退网络重新下载: %@", error.localizedDescription)
+                try? FileManager.default.removeItem(at: cacheDir)
+            }
+        }
+        if forceRefresh {
+            diagnose("forceRefresh=true，跳过已有持久化缓存并重新下载")
+            NSLog("[SYNC] [PersistentManifestLoader] forceRefresh=true，跳过已有缓存")
+        }
+
+        // 6. 没有缓存，显示进度页面
+        NSLog("[CACHE] [PersistentManifestLoader] 未缓存，开始下载资源")
+        diagnose("未缓存，开始下载资源")
+        let totalResources = manifest.resources.count
+
+        var modal: FullScreenProgressViewController?
+        if let vc = viewController {
+            modal = await showProgressModal(
+                from: vc,
+                description: manifest.name ?? "正在缓存页面资源",
+                totalResources: totalResources
+            )
+        }
+
+        // 7. 使用临时目录进行原子更新
+        let tempUUID = UUID().uuidString
+        let tempDir = cacheDirectory.appendingPathComponent("\(cacheID).tmp.\(tempUUID)")
+        let backupDir = cacheDirectory.appendingPathComponent("\(cacheID).old")
+        let fileManager = FileManager.default
+
+        do {
+            try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            NSLog("[DIR] [PersistentManifestLoader] 创建临时下载目录: %@", tempDir.lastPathComponent)
+
+            // 8. 下载 HTML
+            updateState(.downloadingResources(current: 0, total: totalResources))
+            let html = try await downloadHTML(from: url)
+            diagnose("downloadHTML 成功, 大小: \(html.count) bytes, 前100字: \(String(html.prefix(100)))")
+
+            // 9. 下载所有资源到临时目录（非最终缓存目录）
+            let baseURL: URL
+            if url.pathExtension.isEmpty || url.hasDirectoryPath {
+                baseURL = url
+            } else {
+                baseURL = url.deletingLastPathComponent()
+            }
+            try await downloadAllResources(
+                manifest: manifest,
+                cacheID: cacheID,
+                cacheDir: tempDir,
+                baseURL: baseURL
+            ) { [weak modal] current, total, resourceName in
+                modal?.updateProgress(current: current, total: total, message: "正在下载", resourceName: resourceName)
+            }
+            diagnose("downloadAllResources 成功, 资源数: \(manifest.resources.count)")
+
+            // 10. 保存 HTML 和 manifest 到临时目录（不更新 ManifestStore）
+            try saveHTML(html, to: tempDir)
+            diagnose("saveHTML 完成, tempDir: \(tempDir.path)")
+            NSLog("[WEB] [PersistentLoader] HTML 已保存到临时目录, 大小: %d bytes", html.count)
+            try saveManifest(manifest, to: tempDir)
+            diagnose("saveManifest 完成")
+
+            let originURLData = url.absoluteString.data(using: .utf8)
+            try originURLData?.write(to: tempDir.appendingPathComponent("origin_url.txt"))
+            diagnose("origin_url.txt 已保存")
+
+            // 11. 原子交换: old → .old, temp → current, delete .old
+            if fileManager.fileExists(atPath: cacheDir.path) {
+                try? fileManager.removeItem(at: backupDir)
+                try fileManager.moveItem(at: cacheDir, to: backupDir)
+                NSLog("[CACHE] [PersistentManifestLoader] 备份旧缓存 → %@", backupDir.lastPathComponent)
+            }
+
+            diagnose("原子交换: \(tempDir.path) → \(cacheDir.path)")
+            try fileManager.moveItem(at: tempDir, to: cacheDir)
+            diagnose("原子交换成功")
+            NSLog("[OK] [PersistentManifestLoader] 原子更新: 临时目录 → 缓存目录")
+
+            try? fileManager.removeItem(at: backupDir)
+            NSLog("[OK] [PersistentManifestLoader] 原子更新完成: 缓存已替换")
+
+            saveURLMapping(url, cacheID: cacheID)
+            diagnose("saveURLMapping 完成, url: \(url.absoluteString) → cacheID: \(cacheID)")
+
+            // 12. 注册到 ManifestStore（用于首页展示）
+            var finalManifest: Manifest
+            if let existing = ManifestStore.shared.getManifest(for: cacheID) {
+                finalManifest = Manifest(
+                    resources: manifest.resources,
+                    version: manifest.version,
+                    lastUpdated: Date(),
+                    appid: manifest.appid,
+                    name: manifest.name,
+                    icon: manifest.icon,
+                    isPinned: existing.isPinned,
+                    isFavorite: existing.isFavorite,
+                    lastAccessed: Date(),
+                    accessCount: (existing.accessCount ?? 0) + 1
+                )
+            } else {
+                finalManifest = Manifest(
+                    resources: manifest.resources,
+                    version: manifest.version,
+                    lastUpdated: Date(),
+                    appid: manifest.appid,
+                    name: manifest.name,
+                    icon: manifest.icon,
+                    isPinned: false,
+                    isFavorite: false,
+                    lastAccessed: Date(),
+                    accessCount: 1
+                )
+            }
+            ManifestStore.shared.saveManifest(finalManifest, for: cacheID)
+            ManifestStore.shared.saveHTML(html, for: cacheID)
+
+            // 13. 注册到 URL Scheme Handler
+            await registerManifest(manifest, for: cacheID, in: webView)
+
+            // 14. 加载 HTML 到 WebView
+            updateState(.loadingWebView)
+            diagnose("loadHTML 调用, cacheID: \(cacheID)")
+            try await loadHTML(html, cacheID: cacheID, in: webView)
+
+            // 15. 完成
+            updateState(.completed)
+
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await dismissProgressModal()
+
+        } catch {
+            diagnose("loadPersistentPage 失败: \(error.localizedDescription)")
+            try? fileManager.removeItem(at: tempDir)
+            NSLog("[FAIL] [PersistentManifestLoader] 下载失败，清理临时目录，回退: %@", error.localizedDescription)
+
+            // 如果旧备份存在，恢复备份
+            if fileManager.fileExists(atPath: backupDir.path) {
+                try? fileManager.removeItem(at: cacheDir)
+                try? fileManager.moveItem(at: backupDir, to: cacheDir)
+                NSLog("[RECYCLE] [PersistentManifestLoader] 已恢复旧版本备份")
+            }
+
+            // 尝试从旧缓存加载（如果有）
+            let htmlPath = cacheDir.appendingPathComponent("index.html")
+            if fileManager.fileExists(atPath: htmlPath.path),
+               let html = try? String(contentsOfFile: htmlPath.path, encoding: .utf8) {
+                NSLog("[RECYCLE] [PersistentManifestLoader] 使用旧版本缓存（不受更新失败影响）")
+
+                await registerManifest(manifest, for: cacheID, in: webView)
+                try await loadHTML(html, cacheID: cacheID, in: webView)
+                await dismissProgressModal()
+                return
+            }
+
+            // 没有旧缓存 — 真正失败
+            await dismissProgressModal()
+            throw error
+        }
+    }
+
+    // MARK: - Helper Methods
+
+    private func generateCacheID(for url: URL) -> String {
+        return AppIDResolver.resolveAppID(from: url, manifest: nil)
+    }
+
+    /// 基于 manifest 生成 cache ID（使用 AppID）
+    /// - Parameters:
+    ///   - url: 页面 URL
+    ///   - manifest: Web Manifest（可能包含 appid）
+    /// - Returns: 缓存 ID
+    private func generateCacheID(for url: URL, manifest: WebManifest) -> String {
+        let coreManifest = Manifest(
+            resources: manifest.resources,
+            version: manifest.version,
+            appid: manifest.appid
+        )
+        return AppIDResolver.resolveAppID(from: url, manifest: coreManifest)
+    }
+
+    func getLocalPath(for relativePath: String, in cacheDir: URL) -> URL {
+        return cacheDir.appendingPathComponent(relativePath)
+    }
+
+    private func createCacheDirectoryIfNeeded() {
+        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+    }
+
+    private func createCacheDirectory(at url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
+    /// 清理上次失败残留的临时/备份目录（崩溃恢复）
+    private func cleanupStaleDirectories(for cacheID: String) {
+        let fileManager = FileManager.default
+        let cacheDir = cacheDirectory.appendingPathComponent(cacheID)
+        let backupDir = cacheDirectory.appendingPathComponent("\(cacheID).old")
+        let tempPrefix = "\(cacheID).tmp."
+
+        guard let contents = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil) else { return }
+
+        // 崩溃恢复: 如果 cacheDir 不存在但 backupDir 存在，说明在 swap 过程中崩溃了
+        if !fileManager.fileExists(atPath: cacheDir.path) && fileManager.fileExists(atPath: backupDir.path) {
+            try? fileManager.moveItem(at: backupDir, to: cacheDir)
+            NSLog("[CLEAN] [PersistentManifestLoader] 恢复崩溃备份: %@", cacheID)
+        }
+
+        // 清理残留的临时目录
+        for url in contents where url.lastPathComponent.hasPrefix(tempPrefix) {
+            try? fileManager.removeItem(at: url)
+            NSLog("[CLEAN] [PersistentManifestLoader] 清理残留临时目录: %@", url.lastPathComponent)
+        }
+
+        // 清理残留的备份目录
+        if fileManager.fileExists(atPath: backupDir.path) {
+            try? fileManager.removeItem(at: backupDir)
+            NSLog("[CLEAN] [PersistentManifestLoader] 清理残留备份目录")
+        }
+    }
+
+    private func updateState(_ newState: LoadingState) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        loadingState = newState
+    }
+
+    func setLoadingState(_ newState: LoadingState) {
+        updateState(newState)
+    }
+
+    public func getCurrentState() -> LoadingState {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return loadingState
+    }
+
+    // MARK: - Cancellation
+
+    private func cancelDownloads() {
+        tasksLock.lock()
+        let tasks = downloadTasks
+        downloadTasks.removeAll()
+        tasksLock.unlock()
+
+        for task in tasks {
+            task.cancel()
+        }
+
+        updateState(.failed(LoaderError.resourceDownloadFailed("Cancelled", NSError(domain: "PersistentManifestLoader", code: -999))))
+    }
+
+    // MARK: - Cache Management
+
+    /// 清除指定页面的缓存
+    public func clearCache(for url: URL) {
+        let cacheID = generateCacheID(for: url)
+        let cacheDir = cacheDirectory.appendingPathComponent(cacheID)
+
+        try? FileManager.default.removeItem(at: cacheDir)
+        StructuredLogger.shared.debug("[DEL] [PersistentManifestLoader] Cleared cache for: \(url.absoluteString)", category: .cache)
+    }
+
+    /// 清除所有缓存
+    public func clearAllCache() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            try? FileManager.default.removeItem(at: self.cacheDirectory)
+            self.createCacheDirectoryIfNeeded()
+            self.updateState(.idle)
+            StructuredLogger.shared.debug("[DEL] [PersistentManifestLoader] Cleared all cache (async)", category: .cache)
+        }
+    }
+
+    /// 获取缓存大小
+    public func getCacheSize() -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(at: cacheDirectory, includingPropertiesForKeys: [.fileSizeKey]) else {
+            return 0
+        }
+
+        var totalSize: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
+               let fileSize = resourceValues.fileSize {
+                totalSize += Int64(fileSize)
+            }
+        }
+
+        return totalSize
+    }
+
+    public func isCached(url: URL) -> Bool {
+        diagnose("isCached 检查 URL: \(url.absoluteString)")
+        diagnose("isCached cacheDirectory: \(cacheDirectory.path)")
+        diagnose("isCached cacheDirectory exists: \(FileManager.default.fileExists(atPath: cacheDirectory.path))")
+        if let savedCacheID = getCacheIDForURL(url) {
+            diagnose("isCached UserDefaults映射命中, cacheID: \(savedCacheID)")
+            let cacheDir = cacheDirectory.appendingPathComponent(savedCacheID)
+            let htmlPath = cacheDir.appendingPathComponent("index.html")
+            diagnose("isCached htmlPath: \(htmlPath.path), exists: \(FileManager.default.fileExists(atPath: htmlPath.path))")
+            if FileManager.default.fileExists(atPath: htmlPath.path) {
+                NSLog("[WEB] [PersistentLoader] isCached: UserDefaults映射命中, cacheID: %@", savedCacheID)
+                return true
+            } else {
+                let dirContents = (try? FileManager.default.contentsOfDirectory(atPath: cacheDir.path)) ?? []
+                diagnose("isCached 目录内容: \(dirContents.joined(separator: ", "))")
+            }
+        }
+
+        urlMappingLock.lock()
+        let mappedAppID = urlToAppID[url]
+        urlMappingLock.unlock()
+
+        if let appID = mappedAppID {
+            diagnose("isCached 内存映射命中, appID: \(appID)")
+            let cacheDir = cacheDirectory.appendingPathComponent(appID)
+            let htmlPath = cacheDir.appendingPathComponent("index.html")
+            if FileManager.default.fileExists(atPath: htmlPath.path) {
+                return true
+            }
+        }
+
+        let fileManager = FileManager.default
+        guard let contents = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil) else {
+            return false
+        }
+
+        for dir in contents {
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            let htmlPath = dir.appendingPathComponent("index.html")
+            let originPath = dir.appendingPathComponent("origin_url.txt")
+
+            guard fileManager.fileExists(atPath: htmlPath.path),
+                  let originURLString = try? String(contentsOf: originPath, encoding: .utf8),
+                  originURLString == url.absoluteString else {
+                continue
+            }
+
+            let cacheIDFound = dir.lastPathComponent
+            NSLog("[WEB] [PersistentLoader] isCached: 磁盘遍历命中, cacheID: %@", cacheIDFound)
+            diagnose("isCached 磁盘遍历命中, cacheID: \(cacheIDFound)")
+            saveURLMapping(url, cacheID: cacheIDFound)
+            return true
+        }
+
+        NSLog("[WEB] [PersistentLoader] isCached: 未找到缓存 for URL: %@", url.absoluteString)
+        diagnose("isCached 结果: false, URL: \(url.absoluteString)")
+        return false
+    }
+
+    /// 从缓存加载页面（如果已缓存）
+    public func loadFromCache(
+        url: URL,
+        in webView: WKWebView,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        diagnose("loadFromCache URL: \(url.absoluteString)")
+        var cacheID = getCacheIDForURL(url)
+        diagnose("loadFromCache UserDefaults cacheID: \(cacheID ?? "nil")")
+
+        if cacheID == nil {
+            urlMappingLock.lock()
+            cacheID = urlToAppID[url]
+            urlMappingLock.unlock()
+        }
+
+        if cacheID == nil {
+            cacheID = generateCacheID(for: url)
+        }
+
+        guard let resolvedCacheID = cacheID else {
+            completion(.failure(LoaderError.manifestNotFound))
+            return
+        }
+
+        var cacheDir = cacheDirectory.appendingPathComponent(resolvedCacheID)
+        var htmlPath = cacheDir.appendingPathComponent("index.html")
+        var manifestPath = cacheDir.appendingPathComponent(manifestFileName)
+
+        NSLog("[WEB] [PersistentLoader] loadFromCache: cacheID=%@, htmlExists=%d, manifestExists=%d",
+              resolvedCacheID,
+              FileManager.default.fileExists(atPath: htmlPath.path),
+              FileManager.default.fileExists(atPath: manifestPath.path))
+        diagnose("loadFromCache cacheDir: \(cacheDir.path)")
+        diagnose("loadFromCache index.html 存在: \(FileManager.default.fileExists(atPath: htmlPath.path)), manifest.json 存在: \(FileManager.default.fileExists(atPath: manifestPath.path))")
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: cacheDir.path) {
+            diagnose("loadFromCache 缓存目录文件: \(contents)")
+        } else {
+            diagnose("loadFromCache 缓存目录不存在或为空")
+        }
+
+        if !FileManager.default.fileExists(atPath: htmlPath.path) || !FileManager.default.fileExists(atPath: manifestPath.path) {
+            if let foundID = findCacheIDByOriginURL(url) {
+                cacheDir = cacheDirectory.appendingPathComponent(foundID)
+                htmlPath = cacheDir.appendingPathComponent("index.html")
+                manifestPath = cacheDir.appendingPathComponent(manifestFileName)
+            }
+        }
+
+        guard FileManager.default.fileExists(atPath: htmlPath.path),
+              FileManager.default.fileExists(atPath: manifestPath.path) else {
+            completion(.failure(LoaderError.manifestNotFound))
+            return
+        }
+
+        do {
+            let html = try String(contentsOf: htmlPath, encoding: .utf8)
+
+            let manifestData = try Data(contentsOf: manifestPath)
+            let manifest = try JSONDecoder().decode(WebManifest.self, from: manifestData)
+
+            Task { @MainActor in
+                await registerManifest(manifest, for: resolvedCacheID, in: webView)
+
+                let indexFile = cacheDir.appendingPathComponent("index.html")
+                if FileManager.default.fileExists(atPath: indexFile.path) {
+                    NSLog("[WEB] [loadFromCache] loadFileURL: %@", indexFile.path)
+                    webView.loadFileURL(indexFile, allowingReadAccessTo: cacheDir)
+                } else {
+                    NSLog("[WEB] [loadFromCache] index.html not found, falling back to loadHTMLString")
+                    guard let baseURL = URL(string: "\(self.scheme)://\(resolvedCacheID)/") else {
+                        completion(.failure(LoaderError.invalidManifestFormat))
+                        return
+                    }
+                    webView.loadHTMLString(html, baseURL: baseURL)
+                }
+                completion(.success(()))
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    private func findCacheIDByOriginURL(_ url: URL) -> String? {
+        let fileManager = FileManager.default
+        guard let contents = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+
+        let urlAbsoluteString = url.absoluteString
+        for dir in contents {
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            let originURLPath = dir.appendingPathComponent("origin_url.txt")
+            let htmlPath = dir.appendingPathComponent("index.html")
+
+            guard fileManager.fileExists(atPath: htmlPath.path),
+                  let originURLString = try? String(contentsOf: originURLPath, encoding: .utf8),
+                  originURLString == urlAbsoluteString else {
+                continue
+            }
+
+            let foundID = dir.lastPathComponent
+            urlMappingLock.lock()
+            urlToAppID[url] = foundID
+            urlMappingLock.unlock()
+            return foundID
+        }
+
+        return nil
+    }
+}
+
+// MARK: - URLSessionDelegate (SSL Trust for Development)
+extension PersistentManifestLoader: URLSessionDelegate {
+    public func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let serverTrust = challenge.protectionSpace.serverTrust {
+            #if DEBUG
+            NSLog("[WEB] [PersistentLoader] Trusting SSL cert for: %@", challenge.protectionSpace.host)
+            completionHandler(.useCredential, URLCredential(trust: serverTrust))
+            #else
+            completionHandler(.performDefaultHandling, nil)
+            #endif
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}

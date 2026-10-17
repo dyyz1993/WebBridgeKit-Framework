@@ -1,0 +1,950 @@
+name: WebBridgeKit
+options:
+  bundleIdPrefix: com.webbridgekit
+  deploymentTarget:
+    iOS: "14.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  defaultConfig: Debug
+  carthageBuildPath: Carthage/Build/iOS
+  usePods: true
+  generateEmptyDirectories: true
+  objectVersion: 56
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  WebBridgeKit:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources
+      - Resources
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: "9"
+        MARKETING_VERSION: "1.0"
+        PRODUCT_NAME: WebBridgeKit
+        PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.sdk
+        SWIFT_VERSION: "5.0"
+        SWIFT_EMIT_LOC_STRINGS: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        DEFINES_MODULE: YES
+        BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+        ENABLE_PREVIEWS: YES
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        FRAMEWORK_SEARCH_PATHS:
+          - $(inherited)
+          - $(SDKROOT)/System/Library/Frameworks
+        LIBRARY_SEARCH_PATHS:
+          - $(inherited)
+    dependencies:
+      - target: Message
+    buildPhases:
+      - name: 'Copy Resources'
+        files:
+          - Resources/WebBridge.js
+        runOnlyForDeploymentPostprocessing: false
+
+  AppTemplate:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - AppTemplate/Sources
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.apptemplate
+      SWIFT_VERSION: "5.0"
+      TARGETED_DEVICE_FAMILY: "1,2"
+      PRODUCT_NAME: AppTemplate
+      CURRENT_PROJECT_VERSION: "9"
+      MARKETING_VERSION: "1.0"
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: "B45VZCNYU3"
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
+      INFOPLIST_KEY_NSAppTransportSecurity: YES
+    dependencies:
+      - target: WebBridgeKit
+
+  Message:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources/Message
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      CURRENT_PROJECT_VERSION: "9"
+      MARKETING_VERSION: "1.0"
+      PRODUCT_NAME: WBKMessage
+      PRODUCT_MODULE_NAME: WBKMessage
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.sdk.message
+      SWIFT_VERSION: "5.0"
+      SWIFT_EMIT_LOC_STRINGS: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      DEFINES_MODULE: YES
+      BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+      ENABLE_PREVIEWS: NO
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+      FRAMEWORK_SEARCH_PATHS:
+        - $(inherited)
+        - $(SDKROOT)/System/Library/Frameworks
+      LIBRARY_SEARCH_PATHS:
+        - $(inherited)
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+
+  MessageTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/MessageTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.MessageTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  Cache:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources/Cache
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      CURRENT_PROJECT_VERSION: "9"
+      MARKETING_VERSION: "1.0"
+      PRODUCT_NAME: Cache
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.Cache
+      SWIFT_VERSION: "5.0"
+      SWIFT_EMIT_LOC_STRINGS: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      DEFINES_MODULE: YES
+      BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+      ENABLE_PREVIEWS: NO
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+      FRAMEWORK_SEARCH_PATHS:
+        - $(inherited)
+        - $(SDKROOT)/System/Library/Frameworks
+      LIBRARY_SEARCH_PATHS:
+        - $(inherited)
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+
+  CacheTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/CacheTests
+      - Tests/CacheDashboard
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.CacheTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  AI:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources/AI
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      CURRENT_PROJECT_VERSION: "9"
+      MARKETING_VERSION: "1.0"
+      PRODUCT_NAME: AI
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.AI
+      SWIFT_VERSION: "5.0"
+      SWIFT_EMIT_LOC_STRINGS: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      DEFINES_MODULE: YES
+      BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+      ENABLE_PREVIEWS: NO
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+      FRAMEWORK_SEARCH_PATHS:
+        - $(inherited)
+        - $(SDKROOT)/System/Library/Frameworks
+      LIBRARY_SEARCH_PATHS:
+        - $(inherited)
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  AITests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/AITests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.AITests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  Theme:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources/Theme
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      CURRENT_PROJECT_VERSION: "9"
+      MARKETING_VERSION: "1.0"
+      PRODUCT_NAME: Theme
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.Theme
+      SWIFT_VERSION: "5.0"
+      SWIFT_EMIT_LOC_STRINGS: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      DEFINES_MODULE: YES
+      BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+      ENABLE_PREVIEWS: NO
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+      FRAMEWORK_SEARCH_PATHS:
+        - $(inherited)
+        - $(SDKROOT)/System/Library/Frameworks
+      LIBRARY_SEARCH_PATHS:
+        - $(inherited)
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+
+  Skills:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources/Skills
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      CURRENT_PROJECT_VERSION: "9"
+      MARKETING_VERSION: "1.0"
+      PRODUCT_NAME: Skills
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.Skills
+      SWIFT_VERSION: "5.0"
+      SWIFT_EMIT_LOC_STRINGS: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      DEFINES_MODULE: YES
+      BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+      ENABLE_PREVIEWS: NO
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+      FRAMEWORK_SEARCH_PATHS:
+        - $(inherited)
+        - $(SDKROOT)/System/Library/Frameworks
+      LIBRARY_SEARCH_PATHS:
+        - $(inherited)
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+
+  SkillsTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/SkillsTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.SkillsTests
+      TEST_TARGET_NAME: Skills
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: Skills
+
+  HandlerTests-Part1:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests/HandlerTests
+        excludes:
+          - WebNetworkHandlerTests.swift
+          - WebOpenPageHandlerTests.swift
+          - WebOpenSettingsHandlerTests.swift
+          - WebPageCacheHandlerTests.swift
+          - WebPayloadHandlerTests.swift
+          - WebPermissionHandlerTests.swift
+          - WebPermissionStatusHandlerTests.swift
+          - WebPhotoHandlerTests.swift
+          - WebResourceURLSchemeHandlerTests.swift
+          - WebScanHandlerTests.swift
+          - WebScreenHandlerTests.swift
+          - WebSensorsHandlerTests.swift
+          - WebSetModalHandlerTests.swift
+          - WebShareHandlerTests.swift
+          - WebSpeechHandlerTests.swift
+          - WebSpeechSynthesisHandlerTests.swift
+          - WebSystemExtraHandlerTests.swift
+          - WebSystemInfoHandlerTests.swift
+          - WebVibrationHandlerTests.swift
+          - WebVideoHandlerTests.swift
+          - WebMirroringHandlerTests.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.HandlerTests-Part1
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  HandlerTests-Part2:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests/HandlerTests
+        includes:
+          - HandlerTestHelpers.swift
+          - WebNetworkHandlerTests.swift
+          - WebOpenPageHandlerTests.swift
+          - WebOpenSettingsHandlerTests.swift
+          - WebPageCacheHandlerTests.swift
+          - WebPayloadHandlerTests.swift
+          - WebPermissionHandlerTests.swift
+          - WebPermissionStatusHandlerTests.swift
+          - WebPhotoHandlerTests.swift
+          - WebResourceURLSchemeHandlerTests.swift
+          - WebScanHandlerTests.swift
+          - WebScreenHandlerTests.swift
+          - WebSensorsHandlerTests.swift
+          - WebSetModalHandlerTests.swift
+          - WebShareHandlerTests.swift
+          - WebSpeechHandlerTests.swift
+          - WebSpeechSynthesisHandlerTests.swift
+          - WebSystemExtraHandlerTests.swift
+          - WebSystemInfoHandlerTests.swift
+          - WebVibrationHandlerTests.swift
+          - WebVideoHandlerTests.swift
+          - WebMirroringHandlerTests.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.HandlerTests-Part2
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  HandlerTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/HandlerTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.HandlerTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  BridgeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/BridgeTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.BridgeTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  CoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/CoreTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.CoreTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  ModelsTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/ModelsTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.ModelsTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  UtilsTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/UtilsTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.UtilsTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  ServicesTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/ServicesTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.ServicesTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  CommandParserTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/CommandParserTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.CommandParserTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  ThemeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/ThemeTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.ThemeTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  InfrastructureTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/Infrastructure
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.InfrastructureTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  ViewModelTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/ViewModelTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.ViewModelTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  WebBridgeKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/WebBridgeKitTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.WebBridgeKitTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  WebSocketTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/WebSocketTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.WebSocketTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  BaseTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/BaseTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.BaseTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  ExtensionsTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/ExtensionsTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.ExtensionsTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+  ManagersTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Tests/ManagersTests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.ManagersTests
+      TEST_TARGET_NAME: WebBridgeKit
+      SWIFT_VERSION: "5.0"
+      GENERATE_INFOPLIST_FILE: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: NO
+      SDKROOT: iphonesimulator
+      SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: WebBridgeKit
+
+schemes:
+  WebBridgeKit:
+    build:
+      targets:
+        WebBridgeKit: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+
+  AppTemplate:
+    build:
+      targets:
+        AppTemplate: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+
+  Cache:
+    build:
+      targets:
+        Cache: all
+    test:
+      config: Debug
+      targets:
+        - CacheTests
+      coverageTargets:
+        - WebBridgeKit
+    archive:
+      config: Release
+
+  CacheTests:
+    build:
+      targets:
+        CacheTests: all
+    test:
+      config: Debug
+      targets:
+        - CacheTests
+      coverageTargets:
+        - WebBridgeKit
+
+  Message:
+    build:
+      targets:
+        Message: all
+    test:
+      config: Debug
+      targets:
+        - MessageTests
+      coverageTargets:
+        - Message
+    archive:
+      config: Release
+
+  MessageTests:
+    build:
+      targets:
+        MessageTests: all
+    test:
+      config: Debug
+      targets:
+        - MessageTests
+      coverageTargets:
+        - Message
+
+  AI:
+    build:
+      targets:
+        AI: all
+    test:
+      config: Debug
+      targets:
+        - AITests
+      coverageTargets:
+        - WebBridgeKit
+    archive:
+      config: Release
+
+  AITests:
+    build:
+      targets:
+        AITests: all
+    test:
+      config: Debug
+      targets:
+        - AITests
+      coverageTargets:
+        - WebBridgeKit
+
+  Theme:
+    build:
+      targets:
+        Theme: all
+    test:
+      config: Debug
+      targets:
+        - ThemeTests
+      coverageTargets:
+        - WebBridgeKit
+    archive:
+      config: Release
+
+  ThemeTests:
+    build:
+      targets:
+        ThemeTests: all
+    test:
+      config: Debug
+      targets:
+        - ThemeTests
+      coverageTargets:
+        - WebBridgeKit
+
+  Skills:
+    build:
+      targets:
+        Skills: all
+    test:
+      config: Debug
+      targets:
+        - SkillsTests
+      coverageTargets:
+        - Skills
+    archive:
+      config: Release
+
+  SkillsTests:
+    build:
+      targets:
+        SkillsTests: all
+    test:
+      config: Debug
+      targets:
+        - SkillsTests
+      coverageTargets:
+        - Skills
+
+  HandlerTests-Part1:
+    build:
+      targets:
+        HandlerTests-Part1: all
+    test:
+      config: Debug
+      targets:
+        - HandlerTests-Part1
+      coverageTargets:
+        - WebBridgeKit
+
+  HandlerTests-Part2:
+    build:
+      targets:
+        HandlerTests-Part2: all
+    test:
+      config: Debug
+      targets:
+        - HandlerTests-Part2
+      coverageTargets:
+        - WebBridgeKit
+
+  HandlerTests:
+    build:
+      targets:
+        HandlerTests: all
+    test:
+      config: Debug
+      targets:
+        - HandlerTests
+      coverageTargets:
+        - WebBridgeKit
+
+  BridgeTests:
+    build:
+      targets:
+        BridgeTests: all
+    test:
+      config: Debug
+      targets:
+        - BridgeTests
+      coverageTargets:
+        - WebBridgeKit
+
+  CoreTests:
+    build:
+      targets:
+        CoreTests: all
+    test:
+      config: Debug
+      targets:
+        - CoreTests
+      coverageTargets:
+        - WebBridgeKit
+
+  ModelsTests:
+    build:
+      targets:
+        ModelsTests: all
+    test:
+      config: Debug
+      targets:
+        - ModelsTests
+      coverageTargets:
+        - WebBridgeKit
+
+  UtilsTests:
+    build:
+      targets:
+        UtilsTests: all
+    test:
+      config: Debug
+      targets:
+        - UtilsTests
+      coverageTargets:
+        - WebBridgeKit
+
+  ServicesTests:
+    build:
+      targets:
+        ServicesTests: all
+    test:
+      config: Debug
+      targets:
+        - ServicesTests
+      coverageTargets:
+        - WebBridgeKit
+
+  CommandParserTests:
+    build:
+      targets:
+        CommandParserTests: all
+    test:
+      config: Debug
+      targets:
+        - CommandParserTests
+      coverageTargets:
+        - WebBridgeKit
+
+  InfrastructureTests:
+    build:
+      targets:
+        InfrastructureTests: all
+    test:
+      config: Debug
+      targets:
+        - InfrastructureTests
+      coverageTargets:
+        - WebBridgeKit
+
+  ViewModelTests:
+    build:
+      targets:
+        ViewModelTests: all
+    test:
+      config: Debug
+      targets:
+        - ViewModelTests
+      coverageTargets:
+        - WebBridgeKit
+
+  WebSocketTests:
+    build:
+      targets:
+        WebSocketTests: all
+    test:
+      config: Debug
+      targets:
+        - WebSocketTests
+      coverageTargets:
+        - WebBridgeKit
+
+  WebBridgeKitTests:
+    build:
+      targets:
+        WebBridgeKitTests: all
+    test:
+      config: Debug
+      targets:
+        - WebBridgeKitTests
+      coverageTargets:
+        - WebBridgeKit
+
+  BaseTests:
+    build:
+      targets:
+        BaseTests: all
+    test:
+      config: Debug
+      targets:
+        - BaseTests
+      coverageTargets:
+        - WebBridgeKit
+
+  ExtensionsTests:
+    build:
+      targets:
+        ExtensionsTests: all
+    test:
+      config: Debug
+      targets:
+        - ExtensionsTests
+      coverageTargets:
+        - WebBridgeKit
+
+  ManagersTests:
+    build:
+      targets:
+        ManagersTests: all
+    test:
+      config: Debug
+      targets:
+        - ManagersTests
+      coverageTargets:
+        - WebBridgeKit

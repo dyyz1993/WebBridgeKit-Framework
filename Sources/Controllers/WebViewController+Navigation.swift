@@ -1,0 +1,124 @@
+//
+//  WebViewController+Navigation.swift
+//  WebBridgeKit
+//
+
+import WebKit
+
+// MARK: - WKNavigationDelegate
+extension WebViewController {
+
+    /// 页面开始加载 - 更新缓存状态为下载中
+    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        #if DEBUG
+        if let url = webView.url {
+            updateCacheDebugStatus(
+                url: url.absoluteString,
+                status: .downloading,
+                resourceCount: 0,
+                cacheSize: 0
+            )
+        }
+        #endif
+    }
+
+    /// 页面内容开始提交 - 检查缓存状态
+    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        bridge.updateManagedHTMLAppDocumentURL(webView.url)
+        #if DEBUG
+        guard let url = webView.url else { return }
+
+        // 检查是否在缓存中
+        let entries = WebCompressedCacheStore.shared.getAllEntries()
+        let isCached = entries.contains { $0.url == url.absoluteString }
+        let cacheStatus: WebCacheDebugFloatingButton.CacheStatus = isCached ? .hit : .noCache
+
+        // 获取缓存统计
+        let cacheInfo = WebCompressedCacheStore.shared.getMemoryInfo()
+
+        // 计算当前域名的缓存资源数量
+        let domainResources = entries.filter { $0.domain == url.host ?? "" }
+        let resourceCount = domainResources.count
+
+        updateCacheDebugStatus(
+            url: url.absoluteString,
+            status: cacheStatus,
+            resourceCount: resourceCount,
+            cacheSize: Int64(cacheInfo.totalCompressedSize)
+        )
+
+        StructuredLogger.shared.debug("[SEARCH] [CacheDebug] Navigation committed - URL: \(url.absoluteString)", category: .cache)
+        StructuredLogger.shared.debug("   - Cache Status: \(cacheStatus.description)", category: .cache)
+        StructuredLogger.shared.debug("   - Cached Resources: \(resourceCount)", category: .cache)
+        #endif
+    }
+
+    /// 页面加载完成
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        bridge.updateManagedHTMLAppDocumentURL(webView.url)
+        // 页面 meta 声明身份（webbridgekit-app-id 等）：导航完成后读取回填判定链
+        bridge.refreshDeclaredIdentity()
+        // 每次导航后同步收藏按钮状态（URL 变化时已收藏/未收藏可能翻转）
+        refreshFavoriteButtonState()
+        recordHistoryForLoadedPage()
+        #if DEBUG
+        if let url = webView.url {
+            StructuredLogger.shared.info("[OK] [CacheDebug] Page loaded: \(url.absoluteString)", category: .cache)
+        }
+        #endif
+    }
+
+    /// 这个壳承载推送链接与普通网页——最高频的打开路径。不记录历史时，
+    /// 「最近访问」会漏掉这些页面（与 manifest 壳行为不一致）。
+    private func recordHistoryForLoadedPage() {
+        guard let url = webView.url,
+              url.scheme == "https" || url.scheme == "http" else { return }
+        Task { @MainActor in
+            do {
+                try await WebPageHistoryManager.shared.addOrUpdateHistory(
+                    url: url,
+                    title: webView.title,
+                    favicon: nil
+                )
+                NotificationCenter.default.post(name: .historyDidUpdate, object: nil)
+            } catch {
+                StructuredLogger.shared.error(
+                    "Failed to update history for \(url.absoluteString): \(error.localizedDescription)",
+                    category: .storage
+                )
+            }
+        }
+    }
+
+    /// 页面加载失败
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        #if DEBUG
+        if let url = webView.url {
+            updateCacheDebugStatus(
+                url: url.absoluteString,
+                status: .error,
+                resourceCount: 0,
+                cacheSize: 0
+            )
+            StructuredLogger.shared.error("[FAIL] [CacheDebug] Navigation failed: \(url.absoluteString)", category: .cache)
+            StructuredLogger.shared.error("   - Error: \(error.localizedDescription)", category: .ui)
+        }
+        #endif
+    }
+
+    /// 页面内容加载失败
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        #if DEBUG
+        if let url = webView.url {
+            updateCacheDebugStatus(
+                url: url.absoluteString,
+                status: .error,
+                resourceCount: 0,
+                cacheSize: 0
+            )
+            StructuredLogger.shared.error("[FAIL] [CacheDebug] Provisional navigation failed: \(url.absoluteString)", category: .cache)
+            StructuredLogger.shared.error("   - Error: \(error.localizedDescription)", category: .ui)
+        }
+        #endif
+    }
+}

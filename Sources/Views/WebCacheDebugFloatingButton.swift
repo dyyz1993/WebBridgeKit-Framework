@@ -1,0 +1,514 @@
+//
+//  WebCacheDebugFloatingButton.swift
+//  WebBridgeKit
+//
+//  Created on 2026-02-02.
+//
+
+import UIKit
+import WebKit
+
+#if DEBUG
+
+/// Floating debug button for monitoring WebView cache status
+public class WebCacheDebugFloatingButton: UIView {
+
+    // MARK: - Types
+
+    public enum CacheStatus {
+        case hit
+        case downloading
+        case noCache
+        case error
+
+        var color: UIColor {
+            switch self {
+            case .hit: return ThemeTokens.Color.success
+            case .downloading: return ThemeTokens.Color.warning
+            case .noCache: return ThemeTokens.Color.textSecondary
+            case .error: return ThemeTokens.Color.error
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .hit: return "[EMOJI]"
+            case .downloading: return "↓"
+            case .noCache: return "•"
+            case .error: return "[EMOJI]"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .hit: return "Cache Hit"
+            case .downloading: return "Downloading"
+            case .noCache: return "No Cache"
+            case .error: return "Cache Error"
+            }
+        }
+    }
+
+    public struct CacheEvent {
+        let url: String
+        let status: CacheStatus
+        let timestamp: Date
+        let resourceCount: Int
+        let cacheSize: Int64
+
+        public init(url: String, status: CacheStatus, resourceCount: Int, cacheSize: Int64) {
+            self.url = url
+            self.status = status
+            self.timestamp = Date()
+            self.resourceCount = resourceCount
+            self.cacheSize = cacheSize
+        }
+    }
+
+    // MARK: - Properties
+
+    private let buttonSize: CGFloat = 50
+    private let panelWidth: CGFloat = 320
+    private let panelHeight: CGFloat = 400
+
+    private var currentStatus: CacheStatus = .noCache
+    private var currentURL: String = ""
+    private var cachedResourcesCount: Int = 0
+    private var cacheSize: Int64 = 0
+    private var cacheEvents: [CacheEvent] = []
+    private let maxEvents = 10
+
+    private var isExpanded = false
+
+    // UI Components
+    private let floatingButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.backgroundColor = ThemeTokens.Color.textSecondary
+        button.layer.cornerRadius = ThemeTokens.CornerRadius.full
+        let shadow = ThemeTokens.Shadows.floatingAction
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOffset = CGSize(width: shadow.offsetX, height: shadow.offsetY)
+        button.layer.shadowRadius = shadow.radius
+        button.layer.shadowOpacity = Float(shadow.opacity)
+        button.titleLabel?.font = UIFontMetrics(forTextStyle: .title1).scaledFont(for: .systemFont(ofSize: 24, weight: .bold))
+        button.setTitleColor(ThemeTokens.Color.onPrimary, for: .normal)
+        button.accessibilityLabel = "缓存调试按钮"
+        return button
+    }()
+
+    private let closeButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("[EMOJI]", for: .normal)
+        button.titleLabel?.font = UIFontMetrics(forTextStyle: .title3).scaledFont(for: .systemFont(ofSize: 18, weight: .bold))
+        button.setTitleColor(ThemeTokens.Color.onPrimary, for: .normal)
+        button.backgroundColor = ThemeTokens.Color.scrim
+        button.layer.cornerRadius = ThemeTokens.CornerRadius.md
+        button.accessibilityLabel = "关闭调试面板"
+        return button
+    }()
+
+    private let debugPanel: UIView = {
+        let view = UIView()
+        view.backgroundColor = ThemeTokens.Color.background
+        view.layer.cornerRadius = ThemeTokens.CornerRadius.xl
+        let shadow = ThemeTokens.Shadows.card
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOffset = CGSize(width: shadow.offsetX, height: shadow.offsetY)
+        view.layer.shadowRadius = shadow.radius
+        view.layer.shadowOpacity = Float(shadow.opacity)
+        view.alpha = 0
+        view.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        return view
+    }()
+
+    private let stackView: UIStackView = {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = ThemeTokens.Spacing.md
+        stack.distribution = .fill
+        return stack
+    }()
+
+    // MARK: - Initialization
+
+    public init(position: CGPoint = CGPoint(x: 100, y: 100)) {
+        super.init(frame: CGRect(x: position.x, y: position.y, width: buttonSize, height: buttonSize))
+        setupUI()
+        setupGestures()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupUI()
+        setupGestures()
+    }
+
+    // MARK: - Setup
+
+    private func setupUI() {
+        backgroundColor = .clear
+
+        // Setup floating button
+        floatingButton.frame = bounds
+        floatingButton.setTitle("•", for: .normal)
+        floatingButton.addTarget(self, action: #selector(buttonTapped), for: .touchUpInside)
+        addSubview(floatingButton)
+
+        // Setup close button
+        closeButton.frame = CGRect(x: buttonSize - 24, y: -4, width: 20, height: 20)
+        closeButton.isHidden = true
+        closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
+        addSubview(closeButton)
+
+        // Setup debug panel
+        setupDebugPanel()
+    }
+
+    private func setupDebugPanel() {
+        // Title
+        let titleLabel = createLabel(text: "Cache Debug Panel", font: ThemeTokens.Typography.cardTitle)
+
+        let urlLabel = createLabel(text: "Current URL:", font: ThemeTokens.Typography.sectionTitle)
+        let urlValueLabel = createLabel(text: "N/A", font: ThemeTokens.Typography.metadata, textColor: ThemeTokens.Color.textSecondary)
+        urlValueLabel.numberOfLines = 2
+        urlValueLabel.tag = 100
+
+        // Status section
+        let statusLabel = createLabel(text: "Status:", font: ThemeTokens.Typography.sectionTitle)
+        let statusValueLabel = createLabel(text: "No Cache", font: ThemeTokens.Typography.body, textColor: ThemeTokens.Color.textSecondary)
+        statusValueLabel.tag = 101
+
+        let resourcesLabel = createLabel(text: "Cached Resources:", font: ThemeTokens.Typography.sectionTitle)
+        let resourcesValueLabel = createLabel(text: "0 items", font: ThemeTokens.Typography.body)
+        resourcesValueLabel.tag = 102
+
+        let sizeLabel = createLabel(text: "Cache Size:", font: ThemeTokens.Typography.sectionTitle)
+        let sizeValueLabel = createLabel(text: "0 B", font: ThemeTokens.Typography.body)
+        sizeValueLabel.tag = 103
+
+        let eventsLabel = createLabel(text: "Recent Events (Last 10):", font: ThemeTokens.Typography.sectionTitle)
+
+        let eventsStack = UIStackView()
+        eventsStack.axis = .vertical
+        eventsStack.spacing = ThemeTokens.Spacing.sm
+        eventsStack.tag = 104
+
+        // Add all to main stack
+        stackView.addArrangedSubview(titleLabel)
+        stackView.addArrangedSubview(createSeparator())
+        stackView.addArrangedSubview(urlLabel)
+        stackView.addArrangedSubview(urlValueLabel)
+        stackView.addArrangedSubview(createSeparator())
+        stackView.addArrangedSubview(statusLabel)
+        stackView.addArrangedSubview(statusValueLabel)
+        stackView.addArrangedSubview(createSeparator())
+        stackView.addArrangedSubview(resourcesLabel)
+        stackView.addArrangedSubview(resourcesValueLabel)
+        stackView.addArrangedSubview(createSeparator())
+        stackView.addArrangedSubview(sizeLabel)
+        stackView.addArrangedSubview(sizeValueLabel)
+        stackView.addArrangedSubview(createSeparator())
+        stackView.addArrangedSubview(eventsLabel)
+        stackView.addArrangedSubview(eventsStack)
+
+        // Configure stack view
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        debugPanel.addSubview(stackView)
+
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: debugPanel.topAnchor, constant: 16),
+            stackView.leadingAnchor.constraint(equalTo: debugPanel.leadingAnchor, constant: 16),
+            stackView.trailingAnchor.constraint(equalTo: debugPanel.trailingAnchor, constant: -16),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: debugPanel.bottomAnchor, constant: -16)
+        ])
+    }
+
+    private func createLabel(text: String, font: UIFont, textColor: UIColor = ThemeTokens.Color.text) -> UILabel {
+        let label = UILabel()
+        label.text = text
+        label.font = font
+        label.textColor = textColor
+        label.numberOfLines = 0
+        return label
+    }
+
+    private func createSeparator() -> UIView {
+        let separator = UIView()
+        separator.backgroundColor = ThemeTokens.Color.border
+        separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return separator
+    }
+
+    private func setupGestures() {
+        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        addGestureRecognizer(panGesture)
+    }
+
+    // MARK: - Actions
+
+    public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !closeButton.isHidden {
+            let closeButtonFrame = convert(closeButton.frame, from: closeButton.superview)
+            let expandedCloseFrame = closeButtonFrame.insetBy(dx: -12, dy: -12)
+            if expandedCloseFrame.contains(point) {
+                return closeButton
+            }
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    @objc private func buttonTapped() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if isExpanded {
+            collapsePanel()
+        } else {
+            expandPanel()
+        }
+    }
+
+    @objc private func closeButtonTapped() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        removeFromSuperview()
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard !isExpanded else { return }
+
+        let translation = gesture.translation(in: superview)
+        center = CGPoint(x: center.x + translation.x, y: center.y + translation.y)
+        gesture.setTranslation(.zero, in: superview)
+
+        // Keep within bounds
+        if let superview = superview {
+            let bounds = superview.bounds
+            frame = bounds.intersection(frame)
+        }
+    }
+
+    // MARK: - Panel Animation
+
+    private func expandPanel() {
+        guard let superview = superview else { return }
+        isExpanded = true
+        closeButton.isHidden = false
+
+        var panelFrame: CGRect
+        let rightEdge = frame.maxX
+        let bottomEdge = frame.maxY
+
+        if rightEdge + panelWidth <= superview.bounds.width {
+            panelFrame = CGRect(x: rightEdge + 8, y: frame.minY, width: panelWidth, height: panelHeight)
+        } else if frame.minX - panelWidth >= 0 {
+            panelFrame = CGRect(x: frame.minX - panelWidth - 8, y: frame.minY, width: panelWidth, height: panelHeight)
+        } else if bottomEdge + panelHeight <= superview.bounds.height {
+            panelFrame = CGRect(x: frame.minX, y: bottomEdge + 8, width: panelWidth, height: panelHeight)
+        } else {
+            panelFrame = CGRect(x: frame.minX, y: frame.minY - panelHeight - 8, width: panelWidth, height: panelHeight)
+        }
+
+        debugPanel.frame = panelFrame
+        superview.addSubview(debugPanel)
+        superview.bringSubviewToFront(self)
+
+        updatePanelContent()
+
+        if UIAccessibility.isReduceMotionEnabled {
+            self.debugPanel.alpha = 1
+            self.debugPanel.transform = .identity
+        } else {
+            UIView.animate(withDuration: ThemeTokens.Animation.spring.duration, delay: 0, usingSpringWithDamping: ThemeTokens.Animation.spring.damping, initialSpringVelocity: 0, options: .curveEaseOut) {
+                self.debugPanel.alpha = 1
+                self.debugPanel.transform = .identity
+            }
+        }
+    }
+
+    private func collapsePanel() {
+        isExpanded = true
+
+        if UIAccessibility.isReduceMotionEnabled {
+            self.debugPanel.alpha = 0
+            self.debugPanel.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+            self.debugPanel.removeFromSuperview()
+            self.isExpanded = false
+            self.closeButton.isHidden = true
+        } else {
+            UIView.animate(withDuration: ThemeTokens.Animation.normal.duration, delay: 0, options: .curveEaseIn) {
+                self.debugPanel.alpha = 0
+                self.debugPanel.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+            } completion: { _ in
+                self.debugPanel.removeFromSuperview()
+                self.isExpanded = false
+                self.closeButton.isHidden = true
+            }
+        }
+    }
+
+    private func updatePanelContent() {
+        guard let urlValueLabel = stackView.viewWithTag(100) as? UILabel,
+              let statusValueLabel = stackView.viewWithTag(101) as? UILabel,
+              let resourcesValueLabel = stackView.viewWithTag(102) as? UILabel,
+              let sizeValueLabel = stackView.viewWithTag(103) as? UILabel,
+              let eventsStack = stackView.viewWithTag(104) as? UIStackView else {
+            return
+        }
+
+        urlValueLabel.text = currentURL.isEmpty ? "N/A" : currentURL
+        statusValueLabel.text = currentStatus.description
+        statusValueLabel.textColor = currentStatus.color
+        resourcesValueLabel.text = "\(cachedResourcesCount) items"
+        sizeValueLabel.text = formatBytes(cacheSize)
+
+        // Update events
+        eventsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        if cacheEvents.isEmpty {
+            let emptyLabel = createLabel(text: "No events yet", font: ThemeTokens.Typography.caption, textColor: ThemeTokens.Color.textSecondary)
+            eventsStack.addArrangedSubview(emptyLabel)
+        } else {
+            for event in cacheEvents {
+                let eventLabel = createLabel(
+                    text: formatEvent(event),
+                    font: ThemeTokens.Typography.tabLabel,
+                    textColor: event.status.color
+                )
+                eventsStack.addArrangedSubview(eventLabel)
+            }
+        }
+    }
+
+    private func formatEvent(_ event: CacheEvent) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        let time = formatter.string(from: event.timestamp)
+        let shortURL = event.url.count > 40 ? String(event.url.prefix(40)) + "..." : event.url
+        return "[\(time)] \(event.status.icon) \(shortURL)"
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1024
+        let mb = kb / 1024
+        let gb = mb / 1024
+
+        if gb >= 1 {
+            return String(format: "%.2f GB", gb)
+        } else if mb >= 1 {
+            return String(format: "%.2f MB", mb)
+        } else if kb >= 1 {
+            return String(format: "%.2f KB", kb)
+        } else {
+            return "\(bytes) B"
+        }
+    }
+
+    // MARK: - Public API
+
+    /// Update the cache status
+    public func updateStatus(url: String, status: CacheStatus, resourceCount: Int, cacheSize: Int64) {
+        currentURL = url
+        currentStatus = status
+        cachedResourcesCount = resourceCount
+        self.cacheSize = cacheSize
+
+        // Update button appearance
+        UIView.animate(withDuration: ThemeTokens.Animation.fast.duration) {
+            self.floatingButton.backgroundColor = status.color
+            self.floatingButton.setTitle(status.icon, for: .normal)
+        }
+
+        // Add event
+        let event = CacheEvent(url: url, status: status, resourceCount: resourceCount, cacheSize: cacheSize)
+        cacheEvents.insert(event, at: 0)
+
+        if cacheEvents.count > maxEvents {
+            cacheEvents.removeLast()
+        }
+
+        // Update panel if expanded
+        if isExpanded {
+            updatePanelContent()
+        }
+    }
+
+    /// Add a custom event to the event log
+    public func addEvent(url: String, status: CacheStatus, resourceCount: Int = 0, cacheSize: Int64 = 0) {
+        let event = CacheEvent(url: url, status: status, resourceCount: resourceCount, cacheSize: cacheSize)
+        cacheEvents.insert(event, at: 0)
+
+        if cacheEvents.count > maxEvents {
+            cacheEvents.removeLast()
+        }
+
+        if isExpanded {
+            updatePanelContent()
+        }
+    }
+
+    /// Clear all cache events
+    public func clearEvents() {
+        cacheEvents.removeAll()
+        if isExpanded {
+            updatePanelContent()
+        }
+    }
+
+    /// Get all recorded events
+    public var events: [CacheEvent] {
+        return cacheEvents
+    }
+}
+
+// MARK: - WebViewController Extension
+
+public extension WebViewController {
+
+    private enum AssociatedKeys {
+        nonisolated(unsafe) static var debugFloatingButton: UInt8 = 0
+    }
+
+    /// The debug floating button associated with this view controller
+    var debugFloatingButton: WebCacheDebugFloatingButton? {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.debugFloatingButton) as? WebCacheDebugFloatingButton
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.debugFloatingButton, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
+    /// Add a floating debug button to the web view
+    /// - Parameter position: Initial position for the button (default: top-right corner)
+    /// - Returns: The created debug button
+    @discardableResult
+    func addCacheDebugButton(at position: CGPoint? = nil) -> WebCacheDebugFloatingButton {
+        // Remove existing button if present
+        debugFloatingButton?.removeFromSuperview()
+
+        let defaultPosition = CGPoint(x: view.bounds.width - 70, y: 100)
+        let buttonPosition = position ?? defaultPosition
+
+        let button = WebCacheDebugFloatingButton(position: buttonPosition)
+        view.addSubview(button)
+
+        self.debugFloatingButton = button
+        return button
+    }
+
+    /// Remove the debug floating button
+    func removeCacheDebugButton() {
+        debugFloatingButton?.removeFromSuperview()
+        debugFloatingButton = nil
+    }
+
+    /// Update cache status from the debug button
+    /// - Parameters:
+    ///   - url: The current URL
+    ///   - status: The cache status
+    ///   - resourceCount: Number of cached resources
+    ///   - cacheSize: Total cache size in bytes
+    func updateCacheDebugStatus(url: String, status: WebCacheDebugFloatingButton.CacheStatus, resourceCount: Int = 0, cacheSize: Int64 = 0) {
+        debugFloatingButton?.updateStatus(url: url, status: status, resourceCount: resourceCount, cacheSize: cacheSize)
+    }
+}
+
+#endif

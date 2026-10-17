@@ -1,0 +1,333 @@
+//
+//  CrashLogManager.swift
+//  WebBridgeKit
+//
+
+import Foundation
+import MachO
+import UIKit
+import os
+
+public struct CrashReport: Codable {
+    public let type: String
+    public let timestamp: String
+    public let name: String
+    public let reason: String
+    public let callStack: [String]
+    public let appVersion: String
+    public let buildNumber: String
+    public let deviceModel: String
+    public let systemVersion: String
+    public let memoryFootprintMB: Double
+    public let sessionId: String
+    public let currentScreen: String?
+    public let lastUserAction: String?
+}
+
+private func wbk_crashSignalHandler(_ sig: Int32) {
+    CrashLogManager.shared._handleSignal(sig)
+}
+
+public class CrashLogManager {
+
+    public static let shared = CrashLogManager()
+
+    public var serverBaseURL: String?
+
+    private let crashDirectory: URL
+    private let fileManager = FileManager.default
+    private let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private let uploadQueue = DispatchQueue(label: "com.webbridgekit.crash-upload", qos: .utility)
+    private var previousExceptionHandler: NSUncaughtExceptionHandler?
+    private var savedPreviousSignalHandlers: [Int32: (@convention(c) (Int32) -> Void)] = [:]
+
+    private init() {
+        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        crashDirectory = docs.appendingPathComponent("crash_logs", isDirectory: true)
+    }
+
+    public func initialize() {
+        createCrashDirectoryIfNeeded()
+        installHandlers()
+        checkForPreviousCrash()
+    }
+
+    public var hasUnresolvedCrash: Bool {
+        return !crashLogFiles().isEmpty
+    }
+
+    // MARK: - Multiple Launch Soak Test (#59)
+    ///
+    /// Soak Test Procedure:
+    /// 1. Run app 20 consecutive times
+    /// 2. After each launch, run: `bash scripts/scan-crash-logs.sh`
+    /// 3. Monitor for memory leaks (check crash logs for SIGABRT, SIGSEGV)
+    /// 4. Check for OOM/jetsam events in simulator logs
+    ///
+    /// Test script:
+    /// ```bash
+    /// #!/bin/bash
+    /// for i in {1..20}; do
+    ///   echo "Launch #$i"
+    ///   xcrun simctl launch booted com.webbridgekit.superapp
+    ///   sleep 5
+    ///   xcrun simctl terminate booted com.webbridgekit.superapp
+    ///   bash scripts/scan-crash-logs.sh --json
+    /// done
+    /// ```
+    ///
+    /// Expected behavior: Zero crashes after 20 launches
+    ///
+
+    public func getCrashLogs() -> [CrashReport] {
+        return crashLogFiles().compactMap { url -> CrashReport? in
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return try? JSONDecoder().decode(CrashReport.self, from: data)
+        }
+    }
+
+    public func clearCrashLogs() {
+        for url in crashLogFiles() {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
+    public func uploadPendingCrashReports() {
+        let baseURL = serverBaseURL
+        let files = crashLogFiles()
+        guard !files.isEmpty, let baseURL = baseURL else { return }
+
+        uploadQueue.async { [weak self] in
+            guard let self = self else { return }
+            for fileURL in files {
+                self.uploadReport(at: fileURL, serverBaseURL: baseURL)
+            }
+        }
+    }
+
+    public func getLastCrashSummary() -> String? {
+        guard let last = getCrashLogFilesSorted().last,
+              let data = try? Data(contentsOf: last),
+              let report = try? JSONDecoder().decode(CrashReport.self, from: data) else {
+            return nil
+        }
+        return "\(report.type): \(report.name) — \(report.reason) (session: \(report.sessionId))"
+    }
+
+    // MARK: - Internal (called from top-level C function)
+
+    fileprivate func _handleSignal(_ sig: Int32) {
+        let name = signalNameString(sig)
+        let callStack = Thread.callStackSymbols
+
+        let report = CrashReport(
+            type: "signal",
+            timestamp: isoFormatter.string(from: Date()),
+            name: name,
+            reason: "Signal \(sig) (\(name)) received",
+            callStack: callStack,
+            appVersion: appVersion,
+            buildNumber: buildNumber,
+            deviceModel: deviceModel,
+            systemVersion: systemVersion,
+            memoryFootprintMB: memoryFootprintMB,
+            sessionId: StructuredLogger.shared.sessionId,
+            currentScreen: nil,
+            lastUserAction: nil
+        )
+        writeCrashReport(report)
+
+        if let prev = savedPreviousSignalHandlers[sig] {
+            prev(sig)
+        }
+
+        raise(SIGKILL)
+    }
+
+    // MARK: - Private
+
+    private func createCrashDirectoryIfNeeded() {
+        if !fileManager.fileExists(atPath: crashDirectory.path) {
+            try? fileManager.createDirectory(at: crashDirectory, withIntermediateDirectories: true)
+        }
+    }
+
+    private func installHandlers() {
+        previousExceptionHandler = NSGetUncaughtExceptionHandler()
+        NSSetUncaughtExceptionHandler { exception in
+            CrashLogManager.shared.handleException(exception)
+            CrashLogManager.shared.previousExceptionHandler?(exception)
+        }
+
+        let signals: [Int32] = [SIGABRT, SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP]
+        for sig in signals {
+            var old = sigaction()
+            sigaction(sig, nil, &old)
+            let oldHandler = old.__sigaction_u.__sa_handler
+            if let oldHandler = oldHandler {
+                savedPreviousSignalHandlers[sig] = oldHandler
+            }
+
+            var newAction = sigaction()
+            newAction.__sigaction_u.__sa_handler = wbk_crashSignalHandler
+            sigemptyset(&newAction.sa_mask)
+            newAction.sa_flags = 0
+            sigaction(sig, &newAction, nil)
+        }
+    }
+
+    private func checkForPreviousCrash() {
+        let files = crashLogFiles()
+        guard !files.isEmpty else { return }
+
+        let reports = getCrashLogs()
+        let count = reports.count
+        let lastSummary = reports.last.map { "\($0.type): \($0.name)" } ?? "unknown"
+
+        StructuredLogger.shared.error(
+            "Previous session crash detected (\(count) crash log(s), latest: \(lastSummary))",
+            category: .diagnostic,
+            context: ["crashCount": "\(count)", "latestType": reports.last?.type ?? ""]
+        )
+    }
+
+    private func handleException(_ exception: NSException) {
+        let report = CrashReport(
+            type: "exception",
+            timestamp: isoFormatter.string(from: Date()),
+            name: exception.name.rawValue,
+            reason: exception.reason ?? "Unknown exception",
+            callStack: exception.callStackSymbols,
+            appVersion: appVersion,
+            buildNumber: buildNumber,
+            deviceModel: deviceModel,
+            systemVersion: systemVersion,
+            memoryFootprintMB: memoryFootprintMB,
+            sessionId: StructuredLogger.shared.sessionId,
+            currentScreen: nil,
+            lastUserAction: nil
+        )
+        writeCrashReport(report)
+    }
+
+    private func writeCrashReport(_ report: CrashReport) {
+        guard let data = try? JSONEncoder().encode(report) else { return }
+
+        let filename = "crash_\(Int(Date().timeIntervalSince1970)).json"
+        let url = crashDirectory.appendingPathComponent(filename)
+        try? data.write(to: url)
+    }
+
+    private func crashLogFiles() -> [URL] {
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: crashDirectory,
+            includingPropertiesForKeys: nil
+        ) else { return [] }
+        return urls.filter { $0.pathExtension == "json" }
+    }
+
+    private func getCrashLogFilesSorted() -> [URL] {
+        return crashLogFiles().sorted { a, b in
+            a.lastPathComponent < b.lastPathComponent
+        }
+    }
+
+    // MARK: - Upload
+
+    private func uploadReport(at fileURL: URL, serverBaseURL: String) {
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+
+        let endpoint = serverBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            + "/api/v1/crash-reports"
+        guard let url = URL(string: endpoint) else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        request.timeoutInterval = 10
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var success = false
+
+        let task = URLSession.shared.dataTask(with: request) { _, response, _ in
+            if let httpResponse = response as? HTTPURLResponse,
+               (200...299).contains(httpResponse.statusCode) {
+                success = true
+            }
+            semaphore.signal()
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 15)
+
+        if success {
+            let uploadedURL = fileURL.deletingPathExtension().appendingPathExtension("uploaded")
+            try? fileManager.moveItem(at: fileURL, to: uploadedURL)
+        }
+    }
+
+    // MARK: - Device Info
+
+    private var appVersion: String {
+        return Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+    }
+
+    private var buildNumber: String {
+        return Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+    }
+
+    private var deviceModel: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        return withUnsafePointer(to: &systemInfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+                String(cString: $0)
+            }
+        }
+    }
+
+    private var systemVersion: String {
+        return UIDevice.current.systemVersion
+    }
+
+    private var memoryFootprintMB: Double {
+        var taskInfo = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &taskInfo) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+
+        if result == KERN_SUCCESS {
+            let bytes = taskInfo.phys_footprint
+            return Double(bytes) / (1024.0 * 1024.0)
+        }
+
+        let available = os_proc_available_memory()
+        if available > 0 {
+            let total = ProcessInfo.processInfo.physicalMemory
+            let used = total > available ? total - UInt64(available) : 0
+            return Double(used) / (1024.0 * 1024.0)
+        }
+
+        return 0
+    }
+
+    private func signalNameString(_ sig: Int32) -> String {
+        switch sig {
+        case SIGABRT: return "SIGABRT"
+        case SIGSEGV: return "SIGSEGV"
+        case SIGBUS:  return "SIGBUS"
+        case SIGFPE:  return "SIGFPE"
+        case SIGILL:  return "SIGILL"
+        case SIGTRAP: return "SIGTRAP"
+        default:      return "SIG\(sig)"
+        }
+    }
+}
