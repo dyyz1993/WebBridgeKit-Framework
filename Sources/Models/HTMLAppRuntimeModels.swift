@@ -54,6 +54,40 @@ public enum HTMLAppPermissionScope: String, Codable, Sendable {
     case always
 }
 
+/// Concrete first-version controlled Bridge actions. This is narrower than the
+/// broad legacy capability family and cannot satisfy undeclared legacy actions.
+public enum HTMLAppControlledAction: String, CaseIterable, Codable, Sendable {
+    case haptic
+    case vibrate
+    case share
+}
+
+public struct HTMLAppActionDeclaration: Codable, Equatable, Sendable {
+    public let action: HTMLAppControlledAction
+    public let origins: [String]
+    public let purposeId: String
+    public let purpose: String
+    public let scope: HTMLAppPermissionScope
+
+    public init(
+        action: HTMLAppControlledAction,
+        origins: [String],
+        purposeId: String,
+        purpose: String,
+        scope: HTMLAppPermissionScope
+    ) {
+        self.action = action
+        self.origins = origins
+        self.purposeId = purposeId
+        self.purpose = purpose
+        self.scope = scope
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case action, origins, purposeId, purpose, scope
+    }
+}
+
 public struct HTMLAppManifestSignature: Codable, Equatable, Sendable {
     public let algorithm: String
     public let keyID: String
@@ -277,6 +311,7 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
     public let startURL: String
     public let allowedOrigins: [String]
     public let capabilities: [HTMLAppCapability]
+    public let capabilitiesV2: [HTMLAppActionDeclaration]
     public let routes: [String]
     public let cache: HTMLAppCachePolicy
     public let webManifest: HTMLAppWebManifestBinding?
@@ -292,6 +327,7 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
         startURL: String,
         allowedOrigins: [String],
         capabilities: [HTMLAppCapability],
+        capabilitiesV2: [HTMLAppActionDeclaration] = [],
         routes: [String],
         cache: HTMLAppCachePolicy,
         webManifest: HTMLAppWebManifestBinding? = nil,
@@ -304,6 +340,7 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
         self.startURL = startURL
         self.allowedOrigins = allowedOrigins
         self.capabilities = capabilities
+        self.capabilitiesV2 = capabilitiesV2
         self.routes = routes
         self.cache = cache
         self.webManifest = webManifest
@@ -359,6 +396,8 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
             errors.append(.inconsistentDrelOfflineDeclaration)
         }
 
+        errors.append(contentsOf: Self.validateActionDeclarations(self, canonicalOrigins: canonicalOrigins))
+
         if let webManifest {
             guard let url = URL(string: webManifest.url),
                   let origin = HTMLAppOrigin.canonicalOrigin(forDocumentURL: url),
@@ -411,6 +450,19 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
         capabilities.contains(capability)
     }
 
+    public func declaration(
+        for action: HTMLAppControlledAction,
+        origin: String
+    ) -> HTMLAppActionDeclaration? {
+        let canonicalOrigin = HTMLAppOrigin.canonicalDeclaredOrigin(origin)
+        return capabilitiesV2.first { declaration in
+            declaration.action == action
+                && declaration.origins.contains {
+                    HTMLAppOrigin.canonicalDeclaredOrigin($0) == canonicalOrigin
+                }
+        }
+    }
+
     public func allows(route: String) -> Bool {
         routes.contains { HTMLAppRoute.matches(pattern: $0, route: route) }
     }
@@ -418,6 +470,36 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
     private static func isValidAppID(_ appID: String) -> Bool {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
         return !appID.isEmpty && appID.count <= 64 && appID.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
+    private static func validateActionDeclarations(
+        _ manifest: HTMLAppManifest,
+        canonicalOrigins: [String]
+    ) -> [HTMLAppManifestError] {
+        let purposeIDs = manifest.capabilitiesV2.map(\.purposeId)
+        if Set(purposeIDs).count != purposeIDs.count {
+            return [.invalidActionDeclarations]
+        }
+
+        for declaration in manifest.capabilitiesV2 {
+            let purposeID = declaration.purposeId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let purpose = declaration.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
+            if purposeID.isEmpty || purposeID.utf8.count > 128
+                || purpose.isEmpty || purpose.utf8.count > 160 {
+                return [.invalidActionDeclarations]
+            }
+            let declarationOrigins = declaration.origins.compactMap(HTMLAppOrigin.canonicalDeclaredOrigin)
+            if declaration.origins.isEmpty
+                || declarationOrigins.count != declaration.origins.count
+                || Set(declarationOrigins).count != declarationOrigins.count
+                || !declarationOrigins.allSatisfy(canonicalOrigins.contains) {
+                return [.invalidActionDeclarations]
+            }
+            if declaration.scope == .always {
+                return [.invalidActionDeclarations]
+            }
+        }
+        return []
     }
 
     private var hasInconsistentDrelOfflineDeclaration: Bool {
@@ -438,11 +520,40 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
         case startURL
         case allowedOrigins
         case capabilities
+        case capabilitiesV2 = "capabilities_v2"
         case routes
         case cache
         case webManifest
         case drelOffline = "drel_offline"
         case signature
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(String.self, forKey: .schemaVersion)
+        appID = try values.decode(String.self, forKey: .appID)
+        name = try values.decode(String.self, forKey: .name)
+        startURL = try values.decode(String.self, forKey: .startURL)
+        allowedOrigins = try values.decode([String].self, forKey: .allowedOrigins)
+        capabilities = try values.decode([HTMLAppCapability].self, forKey: .capabilities)
+        capabilitiesV2 = try values.decodeIfPresent(
+            [HTMLAppActionDeclaration].self,
+            forKey: .capabilitiesV2
+        ) ?? []
+        routes = try values.decode([String].self, forKey: .routes)
+        cache = try values.decode(HTMLAppCachePolicy.self, forKey: .cache)
+        webManifest = try values.decodeIfPresent(
+            HTMLAppWebManifestBinding.self,
+            forKey: .webManifest
+        )
+        drelOffline = try values.decodeIfPresent(
+            DrelOfflinePackageDeclaration.self,
+            forKey: .drelOffline
+        )
+        signature = try values.decodeIfPresent(
+            HTMLAppManifestSignature.self,
+            forKey: .signature
+        )
     }
 }
 
@@ -472,6 +583,7 @@ public enum HTMLAppManifestError: Error, Equatable, LocalizedError {
     case invalidWebManifestURL(String)
     case invalidWebManifestDigest
     case missingOrInvalidSignature
+    case invalidActionDeclarations
 
     public var errorDescription: String? {
         switch self {
@@ -490,6 +602,7 @@ public enum HTMLAppManifestError: Error, Equatable, LocalizedError {
         case .invalidWebManifestURL(let url): return "Web App Manifest URL is invalid or outside the allowed origins: \(url)"
         case .invalidWebManifestDigest: return "Web App Manifest SHA-256 must be 64 lowercase hexadecimal characters"
         case .missingOrInvalidSignature: return "HTML app manifest signature is missing or invalid"
+        case .invalidActionDeclarations: return "HTML app capabilities_v2 declarations are invalid"
         }
     }
 }

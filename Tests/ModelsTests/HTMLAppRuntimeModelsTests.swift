@@ -11,6 +11,7 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
     private func makeManifest(
         allowedOrigins: [String] = ["https://inventory.example.com"],
         capabilities: [HTMLAppCapability] = [.bluetooth, .camera],
+        capabilitiesV2: [HTMLAppActionDeclaration] = [],
         routes: [String] = ["/", "/items/:id"]
     ) -> HTMLAppManifest {
         HTMLAppManifest(
@@ -19,6 +20,7 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
             startURL: "https://inventory.example.com/index.html",
             allowedOrigins: allowedOrigins,
             capabilities: capabilities,
+            capabilitiesV2: capabilitiesV2,
             routes: routes,
             cache: HTMLAppCachePolicy(strategy: .manifest, version: "1", persistent: true)
         )
@@ -31,6 +33,113 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         XCTAssertTrue(manifest.allows(documentURL: URL(string: "https://inventory.example.com/items/42")!))
         XCTAssertTrue(manifest.declares(.bluetooth))
         XCTAssertFalse(manifest.declares(.location))
+    }
+
+    func testCapabilitiesV2DecodeAndMatchExactActionAndOrigin() throws {
+        let declaration = HTMLAppActionDeclaration(
+            action: .share,
+            origins: ["https://inventory.example.com"],
+            purposeId: "share-report",
+            purpose: "Share the selected report",
+            scope: .once
+        )
+        let json = """
+        {
+          "schemaVersion": "1",
+          "appId": "com.example.inventory",
+          "name": "Inventory",
+          "startURL": "https://inventory.example.com/index.html",
+          "allowedOrigins": ["https://inventory.example.com"],
+          "capabilities": [],
+          "capabilities_v2": [{
+            "action": "share",
+            "origins": ["https://inventory.example.com"],
+            "purposeId": "share-report",
+            "purpose": "Share the selected report",
+            "scope": "once"
+          }],
+          "routes": ["/"],
+          "cache": {"strategy":"networkOnly","version":"1","persistent":false}
+        }
+        """
+
+        let manifest = try JSONDecoder().decode(HTMLAppManifest.self, from: Data(json.utf8))
+
+        XCTAssertEqual(manifest.capabilitiesV2, [declaration])
+        XCTAssertEqual(manifest.declaration(for: .share, origin: "https://inventory.example.com"), declaration)
+        XCTAssertNil(manifest.declaration(for: .share, origin: "https://other.example.com"))
+        XCTAssertNil(manifest.declaration(for: .vibrate, origin: "https://inventory.example.com"))
+        XCTAssertTrue(manifest.validate().isValid)
+    }
+
+    func testCapabilitiesV2RejectsInvalidMetadataOriginsAndScope() {
+        let valid = HTMLAppActionDeclaration(
+            action: .share,
+            origins: ["https://inventory.example.com"],
+            purposeId: "share-report",
+            purpose: "Share the selected report",
+            scope: .once
+        )
+
+        let invalidDeclarations = [
+            HTMLAppActionDeclaration(
+                action: valid.action,
+                origins: ["https://attacker.example"],
+                purposeId: valid.purposeId,
+                purpose: valid.purpose,
+                scope: valid.scope
+            ),
+            HTMLAppActionDeclaration(
+                action: valid.action,
+                origins: valid.origins,
+                purposeId: "",
+                purpose: valid.purpose,
+                scope: valid.scope
+            ),
+            HTMLAppActionDeclaration(
+                action: valid.action,
+                origins: valid.origins,
+                purposeId: valid.purposeId,
+                purpose: String(repeating: "x", count: 161),
+                scope: valid.scope
+            ),
+            HTMLAppActionDeclaration(
+                action: valid.action,
+                origins: valid.origins,
+                purposeId: valid.purposeId,
+                purpose: valid.purpose,
+                scope: .always
+            )
+        ]
+
+        for declaration in invalidDeclarations {
+            let manifest = makeManifest(capabilitiesV2: [declaration])
+            XCTAssertEqual(
+                manifest.validate(),
+                .invalid([.invalidActionDeclarations]),
+                declaration.purposeId
+            )
+        }
+    }
+
+    func testCapabilitiesV2RejectsDuplicatePurposeIDs() {
+        let declaration = HTMLAppActionDeclaration(
+            action: .haptic,
+            origins: ["https://inventory.example.com"],
+            purposeId: "confirm-action",
+            purpose: "Confirm the selected action",
+            scope: .appSession
+        )
+        let manifest = makeManifest(capabilitiesV2: [declaration, declaration])
+
+        XCTAssertEqual(manifest.validate(), .invalid([.invalidActionDeclarations]))
+    }
+
+    func testLegacyCapabilitiesDoNotSatisfyControlledActions() {
+        let manifest = makeManifest(capabilities: [.share])
+
+        XCTAssertTrue(manifest.declares(.share))
+        XCTAssertNil(manifest.declaration(for: .share, origin: "https://inventory.example.com"))
     }
 
     func testCachePolicyDecodesBackwardCompatibleDefaults() throws {
@@ -205,6 +314,33 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         XCTAssertNotEqual(try encoder.encode(withoutDigest), try encoder.encode(withDigest))
         let object = try JSONSerialization.jsonObject(with: encoder.encode(withDigest)) as? [String: Any]
         XCTAssertEqual(object?["resourceManifestSHA256"] as? String, String(repeating: "a", count: 64))
+    }
+
+    func testCapabilitiesV2ChangesCanonicalParentBytes() throws {
+        let base = makeManifest(capabilities: [])
+        let withDeclaration = makeManifest(capabilitiesV2: [
+            HTMLAppActionDeclaration(
+                action: .vibrate,
+                origins: ["https://inventory.example.com"],
+                purposeId: "alert-success",
+                purpose: "Confirm the completed operation",
+                scope: .once
+            )
+        ])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        XCTAssertNotEqual(try encoder.encode(base), try encoder.encode(withDeclaration))
+        let object = try JSONSerialization.jsonObject(
+            with: encoder.encode(withDeclaration)
+        ) as? [String: Any]
+        let declarations = try XCTUnwrap(object?["capabilities_v2"] as? [[String: Any]])
+        let declaration = try XCTUnwrap(declarations.first)
+        XCTAssertEqual(declaration["action"] as? String, "vibrate")
+        XCTAssertEqual(declaration["origins"] as? [String], ["https://inventory.example.com"])
+        XCTAssertEqual(declaration["purposeId"] as? String, "alert-success")
+        XCTAssertEqual(declaration["purpose"] as? String, "Confirm the completed operation")
+        XCTAssertEqual(declaration["scope"] as? String, "once")
     }
 
     func testManifestRejectsWildcardAndPathBasedOrigins() {

@@ -396,6 +396,7 @@ public final class HTMLAppGatewayOnboardingService {
             startURL: manifest.startURL,
             allowedOrigins: manifest.allowedOrigins,
             capabilities: manifest.capabilities,
+            capabilitiesV2: manifest.capabilitiesV2,
             routes: manifest.routes,
             cache: manifest.cache,
             webManifest: manifest.webManifest,
