@@ -43,6 +43,12 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         }
     }
 
+    private final class ShareResultStub: WebNativeAPI {
+        func handle(body: [String: Any], completion: @escaping (Any) -> Void) {
+            completion(["success": true])
+        }
+    }
+
     private final class RevocationAwareHandler: WebNativeAPI, HTMLAppCapabilityRevocationHandling {
         let revoked: XCTestExpectation
 
@@ -60,6 +66,34 @@ final class WebJavaScriptBridgeTests: XCTestCase {
     }
 
     private var bridge: WebJavaScriptBridge!
+
+    private func registerV2Manifest(
+        in registry: HTMLAppTrustRegistry,
+        action: HTMLAppControlledAction = .share,
+        origins: [String] = ["https://bridge.example.com"],
+        scope: HTMLAppPermissionScope = .appSession
+    ) throws -> HTMLAppManifest {
+        let manifest = HTMLAppManifest(
+            appID: "com.example.v2",
+            name: "V2 Demo",
+            startURL: "https://bridge.example.com/index.html",
+            allowedOrigins: ["https://bridge.example.com"],
+            capabilities: [.share],
+            capabilitiesV2: [
+                HTMLAppActionDeclaration(
+                    action: action,
+                    origins: origins,
+                    purposeId: "v2-purpose",
+                    purpose: "Share the selected report",
+                    scope: scope
+                )
+            ],
+            routes: ["/index.html"],
+            cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false)
+        )
+        try registry.register(manifest)
+        return manifest
+    }
 
     override func setUp() {
         super.setUp()
@@ -176,6 +210,91 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             completed.fulfill()
         }
         wait(for: [completed], timeout: 1)
+    }
+
+    func testControlledActionRequiresExactSignedDeclaration() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let legacyManifest = HTMLAppManifest(
+            appID: "com.example.v2",
+            name: "Legacy Only",
+            startURL: "https://bridge.example.com/index.html",
+            allowedOrigins: ["https://bridge.example.com"],
+            capabilities: [.share],
+            routes: ["/index.html"],
+            cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false)
+        )
+        try registry.register(legacyManifest)
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.configureManagedHTMLApp(
+            appID: legacyManifest.appID,
+            documentURL: URL(string: legacyManifest.startURL)
+        )
+
+        let completed = expectation(description: "legacy capability denied")
+        managedBridge.handle(body: [
+            "action": "share",
+            "callbackId": "v2-missing",
+            "params": ["text": "hello", "url": "https://example.com"]
+        ]) { result, _ in
+            let response = result as? [String: Any]
+            XCTAssertEqual(response?["status"] as? String, "denied")
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+    }
+
+    func testControlledActionUsesSignedPurposeAndDeclarationScope() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry)
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: ledger,
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        let presenter = ConsentPresenter()
+        presenter.selectedScope = .always
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(
+            appID: manifest.appID,
+            documentURL: URL(string: manifest.startURL)
+        )
+
+        managedBridge.nativeHandlers["share"] = ShareResultStub()
+
+        let completed = expectation(description: "v2 action allowed")
+        managedBridge.handle(body: [
+            "action": "share",
+            "callbackId": "v2-share",
+            "params": [
+                "text": "runtime reason",
+                "url": "https://example.com",
+                "reason": "runtime reason"
+            ]
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(presenter.requestCount, 1)
+        XCTAssertEqual(presenter.requestedAppIDs, [manifest.appID])
+        let origin = try XCTUnwrap(HTMLAppOrigin.canonicalOrigin(forDocumentURL: URL(string: manifest.startURL)!))
+        let subject = HTMLAppPermissionSubject(
+            gatewayIdentity: "test-gateway",
+            appID: manifest.appID,
+            origin: origin
+        )
+        XCTAssertEqual(
+            ledger.grant(for: subject, capability: .share)?.scope,
+            .appSession
+        )
     }
 
     func testManagedPWAConsentCanBeCancelledBeforeHandlerRuns() throws {

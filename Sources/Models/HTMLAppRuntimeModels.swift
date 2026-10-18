@@ -612,12 +612,20 @@ public struct HTMLAppCapabilityRequest: Codable, Equatable, Sendable {
     public let capability: HTMLAppCapability
     public let reason: String
     public let scope: HTMLAppPermissionScope
+    public let purposeId: String?
 
-    public init(id: String, capability: HTMLAppCapability, reason: String, scope: HTMLAppPermissionScope) {
+    public init(
+        id: String,
+        capability: HTMLAppCapability,
+        reason: String,
+        scope: HTMLAppPermissionScope,
+        purposeId: String? = nil
+    ) {
         self.id = id
         self.capability = capability
         self.reason = reason
         self.scope = scope
+        self.purposeId = purposeId
     }
 
     public func validate(against manifest: HTMLAppManifest) -> HTMLAppCapabilityRequestResult {
