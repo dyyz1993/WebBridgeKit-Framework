@@ -115,6 +115,7 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
     }()
 
     private let immersiveExitControl = ImmersivePWAExitControl()
+    private var runtimeFullscreenEnabled = false
 
     /// App identity from the WebBridgeKit launch payload, when this browser
     /// hosts a registered HTML app instead of a plain page.
@@ -249,7 +250,14 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         webView.accessibilityIdentifier = "browserManager.webView"
         view.addSubview(webView)
         view.addSubview(immersiveExitControl)
-        immersiveExitControl.onExit = { [weak self] in self?.dismissOrPop() }
+        immersiveExitControl.onExit = { [weak self] in
+            guard let self else { return }
+            if self.runtimeFullscreenEnabled {
+                self.applyRuntimeFullscreen(false)
+            } else {
+                self.dismissOrPop()
+            }
+        }
         immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePage() }
         immersiveExitControl.onFavorite = { [weak self] in self?.toggleImmersiveFavorite() }
         immersiveMenuButton.addTarget(self, action: #selector(menuButtonTapped), for: .touchUpInside)
@@ -271,6 +279,15 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
             if let hidden = notification.userInfo?["hidden"] as? Bool {
                 self?.setStatusBarHidden(hidden)
             }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .webBridgeKitFullscreenChanged,
+            object: webView,
+            queue: .main
+        ) { [weak self] notification in
+            guard let enabled = notification.userInfo?["enabled"] as? Bool else { return }
+            self?.applyRuntimeFullscreen(enabled)
         }
 
         NotificationCenter.default.addObserver(
@@ -345,6 +362,7 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
 
         view.backgroundColor = ThemeTokens.Color.background
         hideNavBar = false
+        runtimeFullscreenEnabled = false
         immersiveExitControl.isHidden = true
 
         StructuredLogger.shared.info("[OK] [Browser] UI state fully restored", category: .ui)
@@ -535,6 +553,12 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         isStatusBarHidden = hidden
         setNeedsStatusBarAppearanceUpdate()
         StructuredLogger.shared.debug("[MOBILE] [Browser] 状态栏: \(hidden ? "隐藏" : "显示")", category: .ui)
+    }
+
+    private func applyRuntimeFullscreen(_ enabled: Bool) {
+        runtimeFullscreenEnabled = enabled
+        setNavigationBarHidden(enabled || configuredHideNavigationBar)
+        setStatusBarHidden(enabled || configuredHideStatusBar)
     }
 
     func dismissOrPop() {

@@ -20,13 +20,14 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case "haptic": return .haptic
         case "vibrate": return .vibrate
         case "share": return .share
+        case "fullscreen": return .fullscreen
         default: return nil
         }
     }
 
     public static func capability(for action: String, body: [String: Any]) -> HTMLAppCapability? {
         switch action {
-        case "haptic", "vibrate": return .displayStatus
+        case "haptic", "vibrate", "fullscreen": return .displayStatus
         case "bluetooth": return .bluetooth
         case "camera", "videoStream": return .camera
         case "clipboard": return .clipboard
@@ -70,6 +71,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         switch action {
         case .haptic, .vibrate: return .displayStatus
         case .share: return .share
+        case .fullscreen: return .displayStatus
         }
     }
 

@@ -49,6 +49,14 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         }
     }
 
+    private final class CallCountingStub: WebNativeAPI {
+        var callCount = 0
+        func handle(body: [String: Any], completion: @escaping (Any) -> Void) {
+            callCount += 1
+            completion(["success": true])
+        }
+    }
+
     private final class RevocationAwareHandler: WebNativeAPI, HTMLAppCapabilityRevocationHandling {
         let revoked: XCTestExpectation
 
@@ -122,10 +130,31 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         XCTAssertNil(handler)
     }
 
+    func testFullscreenFactoryIsRegistered() {
+        XCTAssertTrue(bridge.getHandler(for: "fullscreen") is WebFullscreenHandler)
+    }
+
     func testGetHandlerCreatesSameInstanceOnSecondCall() {
         let first = bridge.getHandler(for: "share")
         let second = bridge.getHandler(for: "share")
         XCTAssertTrue((first as AnyObject) === (second as AnyObject), "Lazy loading should return the same instance")
+    }
+
+    func testHostActionAllowlistRejectsUnlistedNativeActionBeforeHandler() {
+        let previousAllowlist = WebBridgeHostCapabilityPolicy.nativeActionAllowlist
+        WebBridgeHostCapabilityPolicy.nativeActionAllowlist = ["share", "haptic", "vibrate"]
+        defer { WebBridgeHostCapabilityPolicy.nativeActionAllowlist = previousAllowlist }
+        let cameraStub = CallCountingStub()
+        bridge.nativeHandlers["camera"] = cameraStub
+
+        let completed = expectation(description: "host policy blocks camera")
+        bridge.handle(body: ["action": "camera", "callbackId": "host-policy-camera"]) { result, _ in
+            let response = result as? WebBridgeResponse
+            XCTAssertEqual(response?.errorCode, 403)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(cameraStub.callCount, 0)
     }
 
     func testGetHandlerForMultipleActions() {
@@ -248,7 +277,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         wait(for: [completed], timeout: 1)
     }
 
-    func testControlledActionUsesSignedPurposeAndDeclarationScope() throws {
+    func testDeclaredShareRunsAfterGestureWithoutReusableConsentGrant() throws {
         let storage = MemoryStorage()
         let registry = HTMLAppTrustRegistry(storage: storage)
         let manifest = try registerV2Manifest(in: registry)
@@ -259,8 +288,8 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             nativeAuthorizationProvider: NativeAuthorizationProvider()
         )
         let presenter = ConsentPresenter()
-        presenter.selectedScope = .always
         managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
         managedBridge.configureManagedHTMLApp(
             appID: manifest.appID,
             documentURL: URL(string: manifest.startURL)
@@ -275,7 +304,6 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             "params": [
                 "text": "runtime reason",
                 "url": "https://example.com",
-                "reason": "runtime reason"
             ]
         ]) { result, _ in
             XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
@@ -283,18 +311,113 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         }
         wait(for: [completed], timeout: 1)
 
-        XCTAssertEqual(presenter.requestCount, 1)
-        XCTAssertEqual(presenter.requestedAppIDs, [manifest.appID])
+        XCTAssertEqual(presenter.requestCount, 0)
         let origin = try XCTUnwrap(HTMLAppOrigin.canonicalOrigin(forDocumentURL: URL(string: manifest.startURL)!))
         let subject = HTMLAppPermissionSubject(
             gatewayIdentity: "test-gateway",
             appID: manifest.appID,
             origin: origin
         )
-        XCTAssertEqual(
-            ledger.grant(for: subject, capability: .share)?.scope,
-            .appSession
+        XCTAssertNil(ledger.grant(for: subject, capability: .share, actionIdentity: "v2-purpose"))
+    }
+
+    func testDeclaredFullscreenRunsAfterGestureWithoutPrivacyConsentOrReusableGrant() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .fullscreen)
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: ledger,
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
         )
+        let presenter = ConsentPresenter()
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
+        managedBridge.configureManagedHTMLApp(
+            appID: manifest.appID,
+            documentURL: URL(string: manifest.startURL)
+        )
+        managedBridge.nativeHandlers["fullscreen"] = ShareResultStub()
+
+        let completed = expectation(description: "declared fullscreen action allowed")
+        managedBridge.handle(body: [
+            "action": "fullscreen",
+            "callbackId": "v2-fullscreen",
+            "params": ["enabled": true]
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(presenter.requestCount, 0)
+        let origin = try XCTUnwrap(HTMLAppOrigin.canonicalOrigin(forDocumentURL: URL(string: manifest.startURL)!))
+        let subject = HTMLAppPermissionSubject(
+            gatewayIdentity: "test-gateway",
+            appID: manifest.appID,
+            origin: origin
+        )
+        XCTAssertNil(ledger.grant(for: subject, capability: .displayStatus, actionIdentity: "v2-purpose"))
+    }
+
+    func testControlledActionNeedsForegroundUserGesture() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry)
+        let presenter = ConsentPresenter()
+        presenter.selectedScope = .always
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+
+        let completed = expectation(description: "gestureless action denied")
+        managedBridge.handle(body: ["action": "share", "callbackId": "no-gesture"]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["status"] as? String, "denied")
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(presenter.requestCount, 0)
+    }
+
+    func testControlledActionsDoNotShareCapabilityGrantIdentity() throws {
+        let ledger = HTMLAppPermissionLedger(storage: MemoryStorage())
+        let subject = HTMLAppPermissionSubject(
+            gatewayIdentity: "gateway-a",
+            appID: "com.example.v2",
+            origin: "https://bridge.example.com"
+        )
+        ledger.grant(subject: subject, capability: .displayStatus, scope: .always, actionIdentity: "haptic-purpose")
+
+        XCTAssertNotNil(ledger.grant(for: subject, capability: .displayStatus, actionIdentity: "haptic-purpose"))
+        XCTAssertNil(ledger.grant(for: subject, capability: .displayStatus, actionIdentity: "vibrate-purpose"))
+        XCTAssertNil(ledger.grant(for: subject, capability: .displayStatus))
+    }
+
+    func testRemovingV2DeclarationPrunesActionGrantEvenWhenLegacyCapabilityRemains() throws {
+        let ledger = HTMLAppPermissionLedger(storage: MemoryStorage())
+        let origin = "https://bridge.example.com"
+        let subject = HTMLAppPermissionSubject(gatewayIdentity: "gateway-a", appID: "com.example.v2", origin: origin)
+        ledger.grant(subject: subject, capability: .share, scope: .always, actionIdentity: "v2-purpose")
+        let updatedManifest = HTMLAppManifest(
+            appID: "com.example.v2",
+            name: "Updated",
+            startURL: "\(origin)/index.html",
+            allowedOrigins: [origin],
+            capabilities: [.share],
+            capabilitiesV2: [],
+            routes: ["/index.html"],
+            cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "2", persistent: false)
+        )
+
+        ledger.syncGrants(with: updatedManifest, gatewayIdentity: subject.gatewayIdentity, origin: origin)
+
+        XCTAssertNil(ledger.grant(for: subject, capability: .share, actionIdentity: "v2-purpose"))
+        XCTAssertTrue(ledger.grants(for: subject).isEmpty)
     }
 
     func testManagedPWAConsentCanBeCancelledBeforeHandlerRuns() throws {

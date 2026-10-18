@@ -1,3 +1,4 @@
+#if DEBUG
 import UIKit
 import WebBridgeKit
 
@@ -152,3 +153,4 @@ public enum DebugType {
     case serverConfig
     case settings
 }
+#endif
