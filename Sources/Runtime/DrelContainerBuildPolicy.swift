@@ -2,26 +2,19 @@ import Foundation
 import UIKit
 import WebKit
 
-/// Build-time capability boundary for the Drel Store product.
+/// Host-configured capability boundary for a plain web container.
 ///
-/// The reusable WebBridgeKit SDK remains bridge-capable by default. Its Release
-/// build inside Drel sets `DREL_CONTAINER_ONLY`, which makes a remote webpage a
-/// plain WKWebView client: it receives read-only runtime metadata, but no bridge
-/// script, message handler, or privileged launch-context JavaScript injection.
-public enum DrelContainerBuildPolicy {
+/// The SDK is bridge-capable by default; a product host may disable the bridge
+/// before its first web view is created.
+public enum WebBridgeHostCapabilityPolicy {
     /// Optional runtime override set by the host application at startup.
-    /// Allows prebuilt or separately compiled SDK frameworks to honor the host's container policy.
     public static var containerOnlyOverride: Bool?
 
     public static var nativeBridgeEnabled: Bool {
         if let override = containerOnlyOverride {
             return !override
         }
-        #if DREL_CONTAINER_ONLY
-        return false
-        #else
         return true
-        #endif
     }
 }
 
@@ -131,13 +124,13 @@ public enum DrelWebRuntimeContract {
             screenWidth: Int(screen.width),
             screenHeight: Int(screen.height),
             displayScale: UIScreen.main.scale,
-            bridgeEnabled: DrelContainerBuildPolicy.nativeBridgeEnabled
+            bridgeEnabled: WebBridgeHostCapabilityPolicy.nativeBridgeEnabled
         )
         configuration.userContentController.addUserScript(WKUserScript(
             source: runtimeBootstrapScript(
                 appVersion: version,
                 buildNumber: build,
-                bridgeEnabled: DrelContainerBuildPolicy.nativeBridgeEnabled
+                bridgeEnabled: WebBridgeHostCapabilityPolicy.nativeBridgeEnabled
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true

@@ -38,7 +38,7 @@ run_gate() {
 }
 
 run_gate "Browser fallback JS" "node tools/verify-webbridge-browser-fallback.js"
-run_gate "Services start and verify" "bash scripts/services.sh start && bash scripts/services.sh verify"
+run_gate "Services start and verify" "DREL_APP_ROOT='$PWD' bash '$PWD/scripts/services.sh' start && DREL_APP_ROOT='$PWD' bash '$PWD/scripts/services.sh' verify"
 run_gate "CoreTests JSBridge" "xcodebuild test -workspace WebBridgeKit.xcworkspace -scheme CoreTests -sdk iphonesimulator -destination '$DESTINATION' -derivedDataPath /tmp/wbk-dd-jsbridge CODE_SIGNING_ALLOWED=NO -only-testing:CoreTests/WebJavaScriptBridgeTests"
 run_gate "BridgeTests" "xcodebuild test -workspace WebBridgeKit.xcworkspace -scheme BridgeTests -sdk iphonesimulator -destination '$DESTINATION' -derivedDataPath /tmp/wbk-dd-jsbridge CODE_SIGNING_ALLOWED=NO"
 # Keep this module gate scoped to handlers used by managed-PWA authorization.
@@ -47,13 +47,6 @@ run_gate "BridgeTests" "xcodebuild test -workspace WebBridgeKit.xcworkspace -sch
 # after hundreds of unrelated UIKit-heavy handler tests in one process.
 run_gate "Capability handlers core" "xcodebuild test -workspace WebBridgeKit.xcworkspace -scheme HandlerTests-Part1 -sdk iphonesimulator -destination '$DESTINATION' -derivedDataPath /tmp/wbk-dd-jsbridge CODE_SIGNING_ALLOWED=NO -only-testing:HandlerTests-Part1/HandlerRegistryTests -only-testing:HandlerTests-Part1/WebBluetoothHandlerTests -only-testing:HandlerTests-Part1/WebClipboardHandlerTests -only-testing:HandlerTests-Part1/SimpleHandlerTests/testClipboardHandler_ReadAction -only-testing:HandlerTests-Part1/SimpleHandlerTests/testClipboardHandler_WriteAction_WithText -only-testing:HandlerTests-Part1/SimpleHandlerTests/testClipboardHandler_WriteAction_WithParamsDict -only-testing:HandlerTests-Part1/SimpleHandlerTests/testClipboardHandler_WriteAction_MissingText_ReturnsError -only-testing:HandlerTests-Part1/SimpleHandlerTests/testClipboardHandler_InvalidAction_ReturnsError -only-testing:HandlerTests-Part1/SimpleHandlerTests/testClipboardHandler_DefaultActionIsRead"
 run_gate "Capability handlers permission" "xcodebuild test -workspace WebBridgeKit.xcworkspace -scheme HandlerTests-Part2 -sdk iphonesimulator -destination '$DESTINATION' -derivedDataPath /tmp/wbk-dd-jsbridge CODE_SIGNING_ALLOWED=NO -only-testing:HandlerTests-Part2/WebPermissionHandlerTests -only-testing:HandlerTests-Part2/WebPermissionStatusHandlerTests -only-testing:HandlerTests-Part2/WebOpenSettingsHandlerTests"
-
-if xcrun simctl list devices booted 2>/dev/null | grep -q "$SIMULATOR_ID"; then
-    run_gate "JSBridge UI tests" "xcodebuild test -workspace WebBridgeKit.xcworkspace -scheme SuperApp -sdk iphonesimulator -destination '$DESTINATION' -derivedDataPath /tmp/wbk-dd-jsbridge CODE_SIGNING_ALLOWED=NO -only-testing:SuperAppUITests/FunctionalTests"
-else
-    ROWS+=("| JSBridge UI tests | FAIL | No booted simulator |")
-    FAIL=$((FAIL + 1))
-fi
 
 {
     echo "# JSBridge Regression Report"

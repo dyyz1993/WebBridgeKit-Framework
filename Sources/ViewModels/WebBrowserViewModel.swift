@@ -221,7 +221,7 @@ extension WKWebViewConfiguration {
         // read-only runtime metadata; it still receives no callable bridge.
         let userContentController = WKUserContentController()
         let bridge = WebJavaScriptBridge()
-        if DrelContainerBuildPolicy.nativeBridgeEnabled {
+        if WebBridgeHostCapabilityPolicy.nativeBridgeEnabled {
             if let scriptURL = Bundle(for: WebBrowserBundleFinder.self)
                 .url(forResource: "WebBridgeKitResources", withExtension: "bundle")
                 .flatMap({ Bundle(url: $0) })?

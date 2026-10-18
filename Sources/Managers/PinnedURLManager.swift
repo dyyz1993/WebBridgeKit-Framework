@@ -333,13 +333,18 @@ public class PinnedURLManager: PinnedURLManaging {
     }
 
     public func seedRecommendedPresetsIfNeeded() async throws -> Int {
+        #if RELEASE
+        // Production hosts own first-run content. SDK defaults must not
+        // silently add third-party destinations to a new user's favorites.
+        return 0
+        #else
         let recommended = PresetURLCatalog.recommendedItems
         guard !recommended.isEmpty else { return 0 }
 
         let existing = try? await getAllPinned()
         if let existing, !existing.isEmpty { return 0 }
-
         return try await importPresets(recommended)
+        #endif
     }
 
     public func move(fromIndex: Int, toIndex: Int) async throws {

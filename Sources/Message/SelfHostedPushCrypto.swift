@@ -45,14 +45,14 @@ public enum SelfHostedPushCrypto {
         let ciphertext: String
     }
 
-    public static let schema = "drel.push-envelope.v1"
-    public static var sharedDefaultsSuite = "group.com.webbridgekit.superapp"
+    public static let schema = WBKPushWireContract.selfHostedSchema
+    public static var sharedDefaultsSuite = "group.com.webbridgekit.sdk"
 
     public static func configure(appGroup: String) {
         self.sharedDefaultsSuite = appGroup
     }
-    public static let privateKeyFileSubpath = "drel-selfhosted-push.x25519-private-key"
-    private static let privateKeyDefaultsKey = "drel.selfhosted-push.x25519-private-key"
+    public static let privateKeyFileSubpath = WBKPushWireContract.selfHostedPrivateKeyFileSubpath
+    private static let privateKeyDefaultsKey = WBKPushWireContract.selfHostedPrivateKeyDefaultsKey
     private static let uiTestingPrivateKeyDefaultsKey = "drel.selfhosted-push.x25519-private-key.ui-testing"
 
     /// Creates a per-installation encryption identity exactly once. The
@@ -136,7 +136,8 @@ public enum SelfHostedPushCrypto {
     /// nil result means no self-hosted envelope was present; callers can then
     /// continue through the legacy ciphertext path unchanged.
     public static func decryptingUserInfoIfPresent(_ userInfo: [AnyHashable: Any]) -> [AnyHashable: Any]? {
-        guard let envelope = userInfo["drelEnvelope"] as? String, !envelope.isEmpty else {
+        guard let envelope = userInfo[WBKPushWireContract.selfHostedEnvelopeField] as? String,
+              !envelope.isEmpty else {
             return nil
         }
         guard let privateKey = sharedPrivateKey(),
@@ -147,7 +148,7 @@ public enum SelfHostedPushCrypto {
         return PushCipher.merging(
             plaintext: plaintext,
             onto: userInfo,
-            removingEnvelopeFields: ["drelEnvelope"]
+            removingEnvelopeFields: [WBKPushWireContract.selfHostedEnvelopeField]
         )
     }
 
@@ -214,7 +215,11 @@ public enum SelfHostedPushCrypto {
     }
 
     private static func associatedData(messageID: String, createdAt: Int, expiresAt: Int) -> Data {
-        Data("\(schema)|\(messageID)|\(createdAt)|\(expiresAt)".utf8)
+        WBKPushWireContract.selfHostedAssociatedData(
+            messageID: messageID,
+            createdAt: createdAt,
+            expiresAt: expiresAt
+        )
     }
 
     private static var isUITestingProcess: Bool {

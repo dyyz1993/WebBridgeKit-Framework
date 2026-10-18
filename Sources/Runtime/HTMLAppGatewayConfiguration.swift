@@ -7,26 +7,6 @@
 
 import Foundation
 
-/// First-party gateway metadata bundled with the official app. This is public
-/// trust material, not user-imported configuration and contains no credentials.
-public enum HTMLAppGatewayDefaults {
-    /// Host-configurable official gateway metadata. Defaults to standard Drel gateway
-    /// for backward compatibility, and can be overridden by any host app at launch.
-    public static var official = HTMLAppGatewayConfiguration(
-        id: "drel-gateway",
-        name: "Drel 官方服务",
-        baseURL: "https://api.drel.app",
-        healthPath: "/health",
-        manifestPath: "/api/v1/html-apps",
-        publicKeyID: "gw-2026-09-15",
-        publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
-    )
-
-    public static func configureOfficial(_ configuration: HTMLAppGatewayConfiguration) {
-        official = configuration
-    }
-}
-
 public struct HTMLAppGatewayConfiguration: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let name: String
@@ -344,19 +324,25 @@ public final class HTMLAppGatewayRegistry {
     private let storage: HTMLAppRuntimeStorage
     private let storageKey: String
     private let allowsDevelopmentHTTP: Bool
+    private let officialGateway: HTMLAppGatewayConfiguration?
     private let lock = NSLock()
     private var state: State
 
     public init(
         storage: HTMLAppRuntimeStorage = HTMLAppUserDefaultsStorage(),
         storageKey: String = "com.webbridgekit.html-app-runtime.gateways",
-        allowsDevelopmentHTTP: Bool = false
+        allowsDevelopmentHTTP: Bool = false,
+        officialGateway: HTMLAppGatewayConfiguration? = nil
     ) {
         self.storage = storage
         self.storageKey = storageKey
         self.allowsDevelopmentHTTP = allowsDevelopmentHTTP
+        self.officialGateway = officialGateway
         var loadedState = Self.load(storage: storage, key: storageKey)
-        let migratedOfficialGateway = Self.migrateLegacyOfficialGateway(in: &loadedState)
+        let migratedOfficialGateway = Self.migrateLegacyOfficialGateway(
+            in: &loadedState,
+            to: officialGateway
+        )
         state = loadedState
         if migratedOfficialGateway {
             try? persistLocked(loadedState)
@@ -440,16 +426,21 @@ public final class HTMLAppGatewayRegistry {
         return state
     }
 
-    /// Converts only prior official defaults to the public Drel gateway. User-created
-    /// self-hosted gateways are deliberately left untouched.
-    private static func migrateLegacyOfficialGateway(in state: inout State) -> Bool {
+    /// Replaces a host's legacy official gateway only when the host supplied
+    /// its current trust anchor. The SDK deliberately knows no product origin.
+    private static func migrateLegacyOfficialGateway(
+        in state: inout State,
+        to officialGateway: HTMLAppGatewayConfiguration?
+    ) -> Bool {
+        guard let officialGateway else { return false }
         let legacyIDs = [
             "tx-webbridgekit",
             "webbridgekit-gateway",
-            HTMLAppGatewayDefaults.official.id
+            officialGateway.id
         ]
-        let legacyGateways = state.configurations.values.filter {
-            legacyIDs.contains($0.id) && isLegacyOfficialOrigin($0.baseURL)
+        let legacyGateways = state.configurations.values.filter { gateway in
+            legacyIDs.contains(gateway.id)
+                && (gateway == officialGateway || isKnownLegacyOfficialOrigin(gateway.baseURL, current: officialGateway))
         }
         guard !legacyGateways.isEmpty else { return false }
 
@@ -457,25 +448,29 @@ public final class HTMLAppGatewayRegistry {
         for gateway in legacyGateways {
             state.configurations.removeValue(forKey: gateway.id)
         }
-        state.configurations[HTMLAppGatewayDefaults.official.id] = HTMLAppGatewayDefaults.official
+        state.configurations[officialGateway.id] = officialGateway
         if wasActive {
-            state.activeGatewayID = HTMLAppGatewayDefaults.official.id
+            state.activeGatewayID = officialGateway.id
         }
         return true
     }
 
-    private static func isLegacyOfficialOrigin(_ baseURL: String) -> Bool {
+    private static func isKnownLegacyOfficialOrigin(
+        _ baseURL: String,
+        current officialGateway: HTMLAppGatewayConfiguration
+    ) -> Bool {
         guard let url = URL(string: baseURL),
               url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased() else {
             return false
         }
+        if let currentURL = URL(string: officialGateway.baseURL),
+           currentURL.scheme?.lowercased() == "https",
+           let currentHost = currentURL.host?.lowercased() {
+            return host == currentHost
+        }
         let labels = host.split(separator: ".").map(String.init)
         return (url.port == 5801 && labels == ["cloak", "xbrowser", "dev"])
             || (url.port == 8443 && labels == ["wbk", "legacy-infra", "legacy-host", "xyz"])
-            // The current official host. Without this, a persisted official
-            // entry still carrying a rotated-out public key would shadow the
-            // refreshed bundled default (activeGateway() is checked first).
-            || labels == ["api", "drel", "app"]
     }
 }
