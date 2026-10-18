@@ -397,6 +397,81 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             return
         }
 
+        // V2 controlled actions have no local/page trust fallback. They require
+        // an exact signed action declaration before authorization can begin.
+        if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action) {
+            let capability = HTMLAppBridgeCapabilityPolicy.capability(for: controlledAction)
+            guard let registeredAppID = managedAppID,
+                  let declaration = trustRegistry.manifest(for: registeredAppID)?
+                      .declaration(for: controlledAction, origin: origin) else {
+                completion(.denied(Self.authorizationError(
+                    capability: capability,
+                    status: .denied,
+                    message: "应用未在签名 Manifest 中声明此操作"
+                )))
+                return
+            }
+            let requestID = UUID().uuidString
+            let request = HTMLAppCapabilityRequest(
+                id: requestID,
+                capability: capability,
+                reason: declaration.purpose,
+                scope: declaration.scope,
+                purposeId: declaration.purposeId
+            )
+            guard let subject = permissionSubject(appID: registeredAppID, origin: origin) else {
+                completion(.denied(Self.authorizationError(
+                    capability: capability,
+                    status: .denied,
+                    message: "未配置可信网关，不能调用受保护的原生能力"
+                )))
+                return
+            }
+            let result = capabilityGateway.requestAuthorization(
+                subject: subject,
+                documentURL: documentURL,
+                request: request
+            )
+            switch (result.status, result.authorizationLayer) {
+            case (.granted, _):
+                completion(.allowed)
+            case (.notDetermined, .htmlApp):
+                guard let presenter = permissionConsentPresenter else {
+                    capabilityGateway.cancelPendingRequests(subject: subject)
+                    completion(.denied(Self.authorizationError(
+                        capability: capability,
+                        status: .denied,
+                        message: "无法显示 PWA 权限确认"
+                    )))
+                    return
+                }
+                storePendingAuthorization(PendingAuthorization(
+                    subject: subject,
+                    documentURL: documentURL,
+                    request: request,
+                    completion: completion
+                ))
+                presenter.requestConsent(HTMLAppPermissionConsentRequest(
+                    application: .init(id: registeredAppID, name: URL(string: origin)?.host ?? origin),
+                    requestID: request.id,
+                    origin: origin,
+                    capability: capability,
+                    reason: declaration.purpose
+                )) { [weak self] selectedScope in
+                    self?.finishPendingAuthorization(requestID: request.id, selectedScope: selectedScope)
+                }
+            default:
+                completion(.denied(Self.authorizationError(
+                    capability: capability,
+                    status: result.status,
+                    message: result.status == .requiresSettings
+                        ? "iOS 系统权限已关闭，请前往系统设置开启"
+                        : "PWA 未获得该原生能力授权"
+                )))
+            }
+            return
+        }
+
         let appID: String
         if let registered = managedAppID, trustRegistry.manifest(for: registered) != nil {
             appID = registered
@@ -608,7 +683,8 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             id: pending.request.id,
             capability: pending.request.capability,
             reason: pending.request.reason,
-            scope: selectedScope
+            scope: selectedScope,
+            purposeId: pending.request.purposeId
         )
 
         // 本地信任：跳过 gateway（无 manifest），请求系统权限 + 落账本

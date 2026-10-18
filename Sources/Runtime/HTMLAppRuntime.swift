@@ -647,13 +647,19 @@ public final class HTMLAppCapabilityGateway {
         guard manifest.allows(documentURL: documentURL) else {
             return result(for: request, status: .denied, failureReason: .originMismatch)
         }
-        guard case .accepted = request.validate(against: manifest) else {
-            return result(for: request, status: .denied, failureReason: .undeclaredCapability)
-        }
         guard let documentOrigin = HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL),
               documentOrigin == subject.origin,
               subject.isFullyIdentified else {
             return result(for: request, status: .denied, failureReason: .originMismatch)
+        }
+
+        let declaration = request.purposeId.flatMap { purposeID -> HTMLAppActionDeclaration? in
+            manifest.capabilitiesV2.first { $0.purposeId == purposeID }
+        }
+        if let declaration,
+           !declaration.origins.contains(subject.origin)
+            || HTMLAppBridgeCapabilityPolicy.capability(for: declaration.action) != request.capability {
+            return result(for: request, status: .denied, failureReason: .undeclaredCapability)
         }
 
         // A system-level refusal cannot be fixed by an in-app panel; surface it
@@ -679,6 +685,17 @@ public final class HTMLAppCapabilityGateway {
         }
 
         if let grant = permissionLedger.grant(for: subject, capability: request.capability) {
+            guard declaration == nil || grant.scope == declaration?.scope else {
+                permissionLedger.revoke(
+                    subject: subject,
+                    capability: request.capability
+                )
+                return result(
+                    for: request,
+                    status: .denied,
+                    failureReason: .undeclaredCapability
+                )
+            }
             return result(for: request, status: .granted, scope: grant.scope)
         }
 
@@ -727,6 +744,15 @@ public final class HTMLAppCapabilityGateway {
             completion(result(for: request, status: .denied, failureReason: .originMismatch, authorizationLayer: .htmlApp))
             return
         }
+        let currentDeclaration = request.purposeId.flatMap { purposeID -> HTMLAppActionDeclaration? in
+            manifest.capabilitiesV2.first { $0.purposeId == purposeID }
+        }
+        if let currentDeclaration,
+           !currentDeclaration.origins.contains(subject.origin)
+            || HTMLAppBridgeCapabilityPolicy.capability(for: currentDeclaration.action) != request.capability {
+            completion(result(for: request, status: .denied, failureReason: .originMismatch, authorizationLayer: .htmlApp))
+            return
+        }
 
         nativeAuthorizationProvider.requestAuthorization(for: request.capability) { [weak self] nativeStatus in
             guard let self else { return }
@@ -735,7 +761,9 @@ public final class HTMLAppCapabilityGateway {
                 let grant = self.permissionLedger.grant(
                     subject: subject,
                     capability: request.capability,
-                    scope: approvedScope
+                    scope: currentDeclaration?.scope == .once && approvedScope == .appSession
+                        ? .once
+                        : currentDeclaration?.scope ?? approvedScope
                 )
                 completion(self.result(for: request, status: .granted, scope: grant.scope))
             case .denied:
