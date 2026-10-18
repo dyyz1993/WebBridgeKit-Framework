@@ -15,6 +15,15 @@ public protocol HTMLAppCapabilityRevocationHandling: AnyObject {
 /// capabilities. Actions not listed here remain available to ordinary web
 /// pages and do not receive access to protected native data or hardware.
 public enum HTMLAppBridgeCapabilityPolicy {
+    public static func controlledAction(for action: String) -> HTMLAppControlledAction? {
+        switch action {
+        case "haptic": return .haptic
+        case "vibrate": return .vibrate
+        case "share": return .share
+        default: return nil
+        }
+    }
+
     public static func capability(for action: String, body: [String: Any]) -> HTMLAppCapability? {
         switch action {
         case "bluetooth": return .bluetooth
