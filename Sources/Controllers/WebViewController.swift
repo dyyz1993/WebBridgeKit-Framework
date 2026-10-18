@@ -105,7 +105,7 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         super.viewDidLoad()
 
         // The Store build must never receive a pre-warmed bridged web view.
-        if DrelContainerBuildPolicy.nativeBridgeEnabled,
+        if WebBridgeHostCapabilityPolicy.nativeBridgeEnabled,
            let instance = WebViewPool.shared.acquire() {
             // 使用池中的实例
             self.webView = instance.webView
@@ -156,9 +156,9 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         // Cache inspection and clearing are framework-debug tools. Drel's
         // Store build uses ordinary web caching transparently, but must not
         // present it as an offline-download or user-facing web-app feature.
-        #if !DREL_CONTAINER_ONLY
-        setupCacheDebugButton()
-        #endif
+        if WebBridgeHostCapabilityPolicy.nativeBridgeEnabled {
+            setupCacheDebugButton()
+        }
         setupImmersiveReturnButton()
         updateImmersiveChrome()
     }

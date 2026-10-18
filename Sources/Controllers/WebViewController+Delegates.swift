@@ -39,7 +39,7 @@ extension WebViewController {
         bridge = WebBridgePool.shared.acquireBridge()
         bridge.setWebView(webView)
 
-        guard DrelContainerBuildPolicy.nativeBridgeEnabled else { return }
+        guard WebBridgeHostCapabilityPolicy.nativeBridgeEnabled else { return }
 
         let bridgeScript = """
         window.BarkBridge = {

@@ -377,11 +377,13 @@ final class PinnedURLManagerAsyncTests: XCTestCase {
 
     // MARK: - seedRecommendedPresetsIfNeeded()
 
+#if DEBUG
     func testSeedRecommendedPresetsAsync_seedsWhenEmpty() async throws {
         let count = try await sut.seedRecommendedPresetsIfNeeded()
 
         XCTAssertGreaterThan(count, 0, "Should seed recommended presets when DB is empty")
     }
+#endif
 
     func testSeedRecommendedPresetsAsync_skipsWhenNotEmpty() async throws {
         try await sut.add(url: "https://already-here.com")

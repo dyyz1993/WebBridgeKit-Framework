@@ -199,7 +199,7 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
-        guard DrelContainerBuildPolicy.nativeBridgeEnabled else {
+        guard WebBridgeHostCapabilityPolicy.nativeBridgeEnabled else {
             configuredHideNavigationBar = params.hideNavigationBar || params.displayMode == .immersive
             configuredHideStatusBar = params.hideStatusBar || params.displayMode == .immersive
             title = params.customTitle ?? title

@@ -17,8 +17,11 @@ iOS 原生增强 PWA 运行时底层框架 SDK（`WebBridgeKit`）与最小宿�
 
 为确保底层 SDK 对任意第三方宿主保持品牌中立与配置隔离，框架层提供以下启动注入点：
 
-1. **容器构建模式注入**：`DrelContainerBuildPolicy.containerOnlyOverride`（默认 `nil`，框架 `Release` 构建默认开启完整 JSBridge 能力；上层容器型宿主可在启动时注入 `true` 禁用 Bridge 注入）。
-2. **网关信任锚点注入**：`HTMLAppGatewayDefaults.configureOfficial(_:)`（允许上层应用在启动时注入自身的官方网关配置与 Ed25519 公钥）。
+1. **容器构建模式注入**：`WebBridgeHostCapabilityPolicy.containerOnlyOverride`
+   （默认 `nil`，框架默认开启完整 JSBridge 能力；上层容器型宿主可在启动时
+   注入 `true` 禁用 Bridge 注入）。
+2. **网关信任锚点注入**：宿主创建 `HTMLAppGatewayRegistry(officialGateway:)`
+   时传入自身的官方网关配置与 Ed25519 公钥；SDK 不内置任何产品默认网关。
 3. **App Group 与钥匙串命名空间注入**：
    - `PushCipher.configure(appGroup:keychainService:)`
    - `SelfHostedPushCrypto.configure(appGroup:)`

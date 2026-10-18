@@ -112,11 +112,19 @@ final class HTMLAppGatewayConfigurationTests: XCTestCase {
         ))
     }
 
-    func testOfficialGatewayIsProductionValidAndContainsNoSecret() {
-        let gateway = HTMLAppGatewayDefaults.official
+    func testHostSuppliedOfficialGatewayIsProductionValidAndContainsNoSecret() {
+        let gateway = HTMLAppGatewayConfiguration(
+            id: "host-official",
+            name: "Host Official Service",
+            baseURL: "https://gateway.example.com",
+            healthPath: "/health",
+            manifestPath: "/api/v1/html-apps",
+            publicKeyID: "gw-2026-09-15",
+            publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
+        )
 
         XCTAssertTrue(gateway.validate().isValid)
-        XCTAssertEqual(gateway.baseURL, "https://api.drel.app")
+        XCTAssertEqual(gateway.baseURL, "https://gateway.example.com")
         XCTAssertEqual(gateway.healthPath, "/health")
         XCTAssertEqual(gateway.manifestPath, "/api/v1/html-apps")
         XCTAssertNotNil(gateway.publicKeyID)
@@ -177,16 +185,23 @@ final class HTMLAppGatewayConfigurationTests: XCTestCase {
         XCTAssertEqual(registry.allGateways(), [first])
     }
 
-    func testRegistryMigratesOnlyLegacyOfficialGateway() throws {
+    func testRegistryMigratesOnlyHostSuppliedLegacyOfficialGateway() throws {
         let storage = MemoryStorage()
+        let official = HTMLAppGatewayConfiguration(
+            id: "host-official",
+            name: "Host Official Service",
+            baseURL: "https://gateway.example.com",
+            publicKeyID: "gw-1",
+            publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
+        )
         let legacyOfficial = HTMLAppGatewayConfiguration(
             id: "webbridgekit-gateway",
-            name: "WebBridgeKit 官方服务",
-            baseURL: "https://wbk.shanbox.19930810.xyz:8443",
+            name: "Host Official Service",
+            baseURL: "https://gateway.example.com",
             healthPath: "/health",
             manifestPath: "/api/v1/html-apps",
-            publicKeyID: "wbk-self-hosted-20260816",
-            publicKey: "h860-f-Vu_IC9DNoOrGrMpnXydSZHjNqb2HprCJIcm8"
+            publicKeyID: "gw-0",
+            publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
         )
         let selfHosted = HTMLAppGatewayConfiguration(
             id: "my-gateway",
@@ -198,9 +213,9 @@ final class HTMLAppGatewayConfigurationTests: XCTestCase {
         try oldRegistry.save(legacyOfficial, activate: true)
         try oldRegistry.save(selfHosted)
 
-        let migratedRegistry = HTMLAppGatewayRegistry(storage: storage)
-        XCTAssertEqual(migratedRegistry.activeGateway(), HTMLAppGatewayDefaults.official)
-        XCTAssertEqual(migratedRegistry.allGateways(), [HTMLAppGatewayDefaults.official, selfHosted])
+        let migratedRegistry = HTMLAppGatewayRegistry(storage: storage, officialGateway: official)
+        XCTAssertEqual(migratedRegistry.activeGateway(), official)
+        XCTAssertEqual(migratedRegistry.allGateways(), [official, selfHosted])
     }
 
     /// A persisted current-host official entry still carrying a rotated-out
@@ -209,19 +224,44 @@ final class HTMLAppGatewayConfigurationTests: XCTestCase {
     /// first) and signed manifests fail closed forever.
     func testRegistryRefreshesRotatedOfficialGatewayOnCurrentHost() throws {
         let storage = MemoryStorage()
+        let official = HTMLAppGatewayConfiguration(
+            id: "host-official",
+            name: "Host Official Service",
+            baseURL: "https://gateway.example.com",
+            publicKeyID: "gw-1",
+            publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
+        )
         let staleOfficial = HTMLAppGatewayConfiguration(
-            id: HTMLAppGatewayDefaults.official.id,
+            id: official.id,
+            name: "Host Official Service",
+            baseURL: "https://gateway.example.com",
+            healthPath: "/health",
+            manifestPath: "/api/v1/html-apps",
+            publicKeyID: "gw-0",
+            publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
+        )
+        try HTMLAppGatewayRegistry(storage: storage).save(staleOfficial, activate: true)
+
+        let upgradedRegistry = HTMLAppGatewayRegistry(storage: storage, officialGateway: official)
+        XCTAssertEqual(upgradedRegistry.activeGateway(), official)
+        XCTAssertEqual(upgradedRegistry.activeGateway()?.publicKeyID, "gw-1")
+    }
+
+    func testSDKHasNoDrelGatewayDefaultAndDoesNotMigrateWithoutHostGateway() throws {
+        let storage = MemoryStorage()
+        let legacyDrel = HTMLAppGatewayConfiguration(
+            id: "drel-gateway",
             name: "Drel 官方服务",
             baseURL: "https://api.drel.app",
             healthPath: "/health",
             manifestPath: "/api/v1/html-apps",
-            publicKeyID: "wbk-self-hosted-20260816",
-            publicKey: "h860-f-Vu_IC9DNoOrGrMpnXydSZHjNqb2HprCJIcm8"
+            publicKeyID: "gw-2026-09-15",
+            publicKey: "M3FVnjzVa8bjFQ-VtDov_mvYrik6c-DGSaRm-wdcLzY"
         )
-        try HTMLAppGatewayRegistry(storage: storage).save(staleOfficial, activate: true)
+        try HTMLAppGatewayRegistry(storage: storage).save(legacyDrel, activate: true)
 
-        let upgradedRegistry = HTMLAppGatewayRegistry(storage: storage)
-        XCTAssertEqual(upgradedRegistry.activeGateway(), HTMLAppGatewayDefaults.official)
-        XCTAssertTrue(upgradedRegistry.activeGateway()?.publicKeyID == "gw-2026-09-15")
+        let unconfiguredRegistry = HTMLAppGatewayRegistry(storage: storage)
+        XCTAssertEqual(unconfiguredRegistry.activeGateway(), legacyDrel)
+        XCTAssertEqual(unconfiguredRegistry.allGateways(), [legacyDrel])
     }
 }

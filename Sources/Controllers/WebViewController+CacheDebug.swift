@@ -11,7 +11,7 @@ extension WebViewController {
 
     /// 设置缓存调试按钮
     func setupCacheDebugButton() {
-        guard DrelContainerBuildPolicy.nativeBridgeEnabled else { return }
+        guard WebBridgeHostCapabilityPolicy.nativeBridgeEnabled else { return }
         let debugButton = UIBarButtonItem(
             title: "[SEARCH] Cache",
             style: .plain,

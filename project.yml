@@ -78,6 +78,7 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - Sources/Message
+      - Sources/WBKPushWireContract.swift
     settings:
       GENERATE_INFOPLIST_FILE: YES
       CURRENT_PROJECT_VERSION: "9"
@@ -106,6 +107,7 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - Tests/MessageTests
+      - Sources/WBKPushWireContract.swift
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.webbridgekit.MessageTests
       TEST_TARGET_NAME: WebBridgeKit

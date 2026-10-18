@@ -58,14 +58,14 @@ public enum PushCipher {
 
     /// App-group container shared by the app and the notification service
     /// extension, where the symmetric key is mirrored for both processes.
-    public static var sharedDefaultsSuite = "group.com.webbridgekit.superapp"
-    public static var keychainService = "com.webbridgekit.superapp.push-crypto"
-    private static let sharedDefaultsKey = "wbk.push-crypto.aes-key"
+    public static var sharedDefaultsSuite = "group.com.webbridgekit.sdk"
+    public static var keychainService = "com.webbridgekit.sdk.push-crypto"
+    private static let sharedDefaultsKey = WBKPushWireContract.sharedAESDefaultsKey
     /// File mirror of the key inside the app-group container. The service
     /// extension sometimes cannot read the shared UserDefaults plist while
     /// the device is locked (file protection); a plain file with
     /// until-first-unlock protection is readable in every push scenario.
-    public static let keyFileSubpath = "push-crypto.key"
+    public static let keyFileSubpath = WBKPushWireContract.sharedAESFileSubpath
 
     /// Configures host-specific App Group and Keychain identifiers so multiple host apps do not collide.
     public static func configure(appGroup: String, keychainService: String) {
@@ -163,12 +163,16 @@ public enum PushCipher {
         if let selfHosted = SelfHostedPushCrypto.decryptingUserInfoIfPresent(userInfo) {
             return selfHosted
         }
-        guard let ciphertext = userInfo["ciphertext"] as? String,
+        guard let ciphertext = userInfo[WBKPushWireContract.ciphertextField] as? String,
               !ciphertext.isEmpty
         else { return userInfo }
         guard let keyData = sharedKey() else { return userInfo }
         guard let plain = try? decrypt(ciphertextBase64: ciphertext, keyData: keyData)
         else { return userInfo }
-        return merging(plaintext: plain, onto: userInfo)
+        return merging(
+            plaintext: plain,
+            onto: userInfo,
+            removingEnvelopeFields: [WBKPushWireContract.ciphertextField]
+        )
     }
 }

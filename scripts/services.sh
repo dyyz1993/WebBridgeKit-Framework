@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DREL_APP_ROOT="${DREL_APP_ROOT:-}"
 PID_DIR="$PROJECT_ROOT/.services"
 mkdir -p "$PID_DIR"
 
@@ -23,6 +24,18 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 _port_pid() {
     lsof -ti ":$1" -sTCP:LISTEN 2>/dev/null || true
 }
+
+# The split framework repository has no product server. Reuse the sibling
+# Drel services so SDK tests keep deterministic local backend fixtures.
+_service_root() {
+    if [[ -n "$DREL_APP_ROOT" && -d "$DREL_APP_ROOT/Server" ]]; then
+        printf "%s" "$DREL_APP_ROOT"
+    else
+        printf "%s" "$PROJECT_ROOT"
+    fi
+}
+
+SERVICE_ROOT="$(_service_root)"
 
 _is_alive() {
     local pid="$1"
@@ -145,14 +158,14 @@ start_backend() {
     fi
 
     log "Starting WebBridgeServer (Swift Hummingbird) on :$SWIFT_PORT ..."
-    cd "$PROJECT_ROOT/Server"
+    cd "$SERVICE_ROOT/Server"
     if [ ! -f ".build/debug/WebBridgeServer" ]; then
         log "Building WebBridgeServer ..."
         swift build 2>&1 | tail -3
     fi
 
     _launch_service "backend" \
-        "cd '$PROJECT_ROOT/Server' && SERVER_PORT=$SWIFT_PORT ADMIN_API_KEY=test-admin-key DATA_DIR='$PROJECT_ROOT/.data' exec .build/debug/WebBridgeServer" \
+        "cd '$SERVICE_ROOT/Server' && SERVER_PORT=$SWIFT_PORT ADMIN_API_KEY=test-admin-key DATA_DIR='$PROJECT_ROOT/.data' exec .build/debug/WebBridgeServer" \
         "$PID_DIR/backend.log" \
         "$PID_DIR/backend.log"
 
@@ -178,10 +191,10 @@ start_http() {
     fi
 
     log "Starting test HTTP server on :$HTTP_PORT ..."
-    cd "$PROJECT_ROOT"
+    cd "$SERVICE_ROOT"
     _launch_service "http" "exec python3 - <<'PY'
 import http.server, socketserver, os
-os.chdir('$PROJECT_ROOT')
+os.chdir('$SERVICE_ROOT')
 class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -215,10 +228,10 @@ start_prototype() {
     fi
 
     log "Starting prototype HTML server on :$PROTO_PORT ..."
-    cd "$PROJECT_ROOT/docs/prototype"
+    cd "$SERVICE_ROOT/docs/prototype"
     _launch_service "prototype" "exec python3 - <<'PY'
 import http.server, socketserver, os
-os.chdir('$PROJECT_ROOT/docs/prototype')
+os.chdir('$SERVICE_ROOT/docs/prototype')
 class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')

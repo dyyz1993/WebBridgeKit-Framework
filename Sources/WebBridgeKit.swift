@@ -57,7 +57,7 @@ public final class WebBridgeKitManager {
 
         // Drel's Store target is a plain container. Warming the pooled bridge
         // would inject a script before the app creates its first web view.
-        guard DrelContainerBuildPolicy.nativeBridgeEnabled else { return }
+        guard WebBridgeHostCapabilityPolicy.nativeBridgeEnabled else { return }
 
         // 预热 WebView 和 Bridge 池，提升首次打开速度
         DispatchQueue.main.async {

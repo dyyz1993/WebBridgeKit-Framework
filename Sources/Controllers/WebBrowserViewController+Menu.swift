@@ -22,10 +22,10 @@ extension WebBrowserViewController {
             self?.webView.reload()
         })
 
-        // 容器构建（DREL_CONTAINER_ONLY）下宿主设置 Provider 恒返回 nil，
+        // 容器模式下宿主设置 Provider 恒返回 nil，
         // 菜单里摆「应用设置」只会弹「设置模块不可用」——按构建能力收口，
         // 桥能力开启时才暴露该入口。
-        if viewModel.managedHTMLAppID != nil, DrelContainerBuildPolicy.nativeBridgeEnabled {
+        if viewModel.managedHTMLAppID != nil, WebBridgeHostCapabilityPolicy.nativeBridgeEnabled {
             alertController.addAction(UIAlertAction(title: "应用设置", style: .default) { [weak self] _ in
                 self?.showManagedHTMLAppSettings()
             })

@@ -15,6 +15,15 @@ final class PushCipherContractTests: XCTestCase {
         "AAECAwQFBgcICQoL7QDIFoZ2P6lWoEsVFVFYzVxila6Rec5+C0q8x+kwTCkNOsIhCxFuhfqZ3P+GuOYD3iEISSGd2htF5q+9+fNRT29e/FhX4BBTrQBYM1bCHi7IszRfzMicW3YBReqSin7q/pel0sdX87KKBi4CM9x9OwiSzQZtm2BVQQ6xBrKV9GxuCspMbnUzoVQhNYPu8E6bl/S9Vs4="
     private static let vectorKey = Data(base64Encoded: "3ODfqVpzY+MOyn+i0oOMPg==")!
 
+    override func tearDown() {
+        PushCipher.configure(
+            appGroup: "group.com.webbridgekit.sdk",
+            keychainService: "com.webbridgekit.sdk.push-crypto"
+        )
+        SelfHostedPushCrypto.configure(appGroup: "group.com.webbridgekit.sdk")
+        super.tearDown()
+    }
+
     func testDecryptFixedVector() throws {
         let plain = try PushCipher.decrypt(
             ciphertextBase64: Self.vectorCiphertext,
@@ -23,6 +32,51 @@ final class PushCipherContractTests: XCTestCase {
         XCTAssertEqual(plain["title"] as? String, "🔐 契约向量")
         XCTAssertEqual(plain["body"] as? String, "自动化解密验证")
         XCTAssertEqual(plain["verificationCode"] as? String, "135790")
+    }
+
+    func testPushWireContractExposesFrozenSharedIdentifiers() {
+        XCTAssertEqual(WBKPushWireContract.ciphertextField, "ciphertext")
+        XCTAssertEqual(WBKPushWireContract.selfHostedEnvelopeField, "drelEnvelope")
+        XCTAssertEqual(WBKPushWireContract.selfHostedSchema, "drel.push-envelope.v1")
+        XCTAssertEqual(WBKPushWireContract.sharedAESDefaultsKey, "wbk.push-crypto.aes-key")
+        XCTAssertEqual(WBKPushWireContract.sharedAESFileSubpath, "push-crypto.key")
+        XCTAssertEqual(
+            WBKPushWireContract.selfHostedPrivateKeyDefaultsKey,
+            "drel.selfhosted-push.x25519-private-key"
+        )
+        XCTAssertEqual(
+            WBKPushWireContract.selfHostedPrivateKeyFileSubpath,
+            "drel-selfhosted-push.x25519-private-key"
+        )
+        XCTAssertEqual(
+            WBKPushWireContract.selfHostedAssociatedData(
+                messageID: "message-1",
+                createdAt: 100,
+                expiresAt: 200
+            ),
+            Data("drel.push-envelope.v1|message-1|100|200".utf8)
+        )
+    }
+
+    func testPushNamespaceDefaultsAreWebBridgeKitAndHostsCanOverrideThem() {
+        XCTAssertEqual(PushCipher.sharedDefaultsSuite, "group.com.webbridgekit.sdk")
+        XCTAssertEqual(PushCipher.keychainService, "com.webbridgekit.sdk.push-crypto")
+        XCTAssertEqual(SelfHostedPushCrypto.sharedDefaultsSuite, "group.com.webbridgekit.sdk")
+
+        let firstSuite = "test.wbk.push.namespace.first"
+        let secondSuite = "test.wbk.push.namespace.second"
+        let defaultsKey = WBKPushWireContract.sharedAESDefaultsKey
+        UserDefaults(suiteName: firstSuite)?.removeObject(forKey: defaultsKey)
+        UserDefaults(suiteName: secondSuite)?.removeObject(forKey: defaultsKey)
+
+        PushCipher.configure(appGroup: firstSuite, keychainService: "test.wbk.push.keychain.first")
+        PushCipher.storeSharedKey(Self.vectorKey)
+        XCTAssertEqual(PushCipher.sharedKey(), Self.vectorKey)
+
+        PushCipher.configure(appGroup: secondSuite, keychainService: "test.wbk.push.keychain.second")
+        XCTAssertNil(PushCipher.sharedKey())
+        SelfHostedPushCrypto.configure(appGroup: secondSuite)
+        XCTAssertEqual(SelfHostedPushCrypto.sharedDefaultsSuite, secondSuite)
     }
 
     func testDecryptRejectsWrongKeyAndGarbage() {
@@ -96,7 +150,7 @@ final class PushCipherContractTests: XCTestCase {
     /// modified userInfo does not survive) must still decrypt in place.
     func testConsumerDecryptsRawWireUserInfoInPlace() throws {
         UserDefaults(suiteName: PushCipher.sharedDefaultsSuite)?
-            .set(Self.vectorKey, forKey: "wbk.push-crypto.aes-key")
+            .set(Self.vectorKey, forKey: WBKPushWireContract.sharedAESDefaultsKey)
 
         let raw: [AnyHashable: Any] = [
             "title": "",
@@ -120,18 +174,18 @@ final class PushCipherContractTests: XCTestCase {
     /// NSE can read even when the shared UserDefaults plist is unavailable.
     func testDualChannelKeyStorageRoundTrip() {
         let suite = UserDefaults(suiteName: PushCipher.sharedDefaultsSuite)
-        suite?.removeObject(forKey: "wbk.push-crypto.aes-key")
-        suite?.set(Self.vectorKey, forKey: "wbk.push-crypto.aes-key")
+        suite?.removeObject(forKey: WBKPushWireContract.sharedAESDefaultsKey)
+        suite?.set(Self.vectorKey, forKey: WBKPushWireContract.sharedAESDefaultsKey)
 
         // defaults mirror hit
         XCTAssertEqual(PushCipher.sharedKey(), Self.vectorKey)
 
         // defaults empty → file mirror serves and heals defaults
-        suite?.removeObject(forKey: "wbk.push-crypto.aes-key")
+        suite?.removeObject(forKey: WBKPushWireContract.sharedAESDefaultsKey)
         PushCipher.storeSharedKey(Self.vectorKey)
-        suite?.removeObject(forKey: "wbk.push-crypto.aes-key")
+        suite?.removeObject(forKey: WBKPushWireContract.sharedAESDefaultsKey)
         XCTAssertEqual(PushCipher.sharedKey(), Self.vectorKey)
-        XCTAssertEqual(suite?.data(forKey: "wbk.push-crypto.aes-key"), Self.vectorKey)
+        XCTAssertEqual(suite?.data(forKey: WBKPushWireContract.sharedAESDefaultsKey), Self.vectorKey)
     }
 
     func testSelfHostedEnvelopeDecryptsAndMergesThePerDevicePayload() throws {
