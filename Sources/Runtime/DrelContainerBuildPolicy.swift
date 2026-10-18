@@ -10,6 +10,10 @@ public enum WebBridgeHostCapabilityPolicy {
     /// Optional runtime override set by the host application at startup.
     public static var containerOnlyOverride: Bool?
 
+    /// Optional per-product action allowlist. When set, every Bridge command
+    /// outside this list is rejected before a native handler can run.
+    public static var nativeActionAllowlist: Set<String>?
+
     public static var nativeBridgeEnabled: Bool {
         if let override = containerOnlyOverride {
             return !override

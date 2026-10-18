@@ -217,8 +217,8 @@ extension WKWebViewConfiguration {
         // 1. 数据存储配置
         config.websiteDataStore = WKWebsiteDataStore.default()
 
-        // 2. User content controller. The Store build receives only Drel's
-        // read-only runtime metadata; it still receives no callable bridge.
+        // 2. User content controller. Hosts that enable the bridge must apply
+        // their product allowlist before any managed page can invoke actions.
         let userContentController = WKUserContentController()
         let bridge = WebJavaScriptBridge()
         if WebBridgeHostCapabilityPolicy.nativeBridgeEnabled {

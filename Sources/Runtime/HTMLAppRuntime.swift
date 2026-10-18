@@ -221,8 +221,9 @@ public struct HTMLAppPermissionSubject: Codable, Equatable, Hashable, Sendable {
         !gatewayIdentity.isEmpty && !appID.isEmpty && !origin.isEmpty
     }
 
-    func storageKey(capability: HTMLAppCapability) -> String {
-        "\(gatewayIdentity)|\(appID)|\(origin)|\(capability.rawValue)"
+    func storageKey(capability: HTMLAppCapability, actionIdentity: String? = nil) -> String {
+        let base = "\(gatewayIdentity)|\(appID)|\(origin)|\(capability.rawValue)"
+        return actionIdentity.map { "\(base)|action:\($0)" } ?? base
     }
 }
 
@@ -231,6 +232,7 @@ public struct HTMLAppPermissionGrant: Codable, Equatable, Sendable {
     public let capability: HTMLAppCapability
     public let scope: HTMLAppPermissionScope
     public let grantedAt: Date
+    public let actionIdentity: String?
 
     public var appID: String { subject.appID }
     public var gatewayIdentity: String { subject.gatewayIdentity }
@@ -240,11 +242,13 @@ public struct HTMLAppPermissionGrant: Codable, Equatable, Sendable {
         subject: HTMLAppPermissionSubject,
         capability: HTMLAppCapability,
         scope: HTMLAppPermissionScope,
+        actionIdentity: String? = nil,
         grantedAt: Date = Date()
     ) {
         self.subject = subject
         self.capability = capability
         self.scope = scope
+        self.actionIdentity = actionIdentity
         self.grantedAt = grantedAt
     }
 
@@ -254,6 +258,7 @@ public struct HTMLAppPermissionGrant: Codable, Equatable, Sendable {
         case capability
         case scope
         case grantedAt
+        case actionIdentity
     }
 
     public init(from decoder: Decoder) throws {
@@ -271,6 +276,7 @@ public struct HTMLAppPermissionGrant: Codable, Equatable, Sendable {
         capability = try values.decode(HTMLAppCapability.self, forKey: .capability)
         scope = try values.decode(HTMLAppPermissionScope.self, forKey: .scope)
         grantedAt = try values.decode(Date.self, forKey: .grantedAt)
+        actionIdentity = try values.decodeIfPresent(String.self, forKey: .actionIdentity)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -279,6 +285,7 @@ public struct HTMLAppPermissionGrant: Codable, Equatable, Sendable {
         try container.encode(capability, forKey: .capability)
         try container.encode(scope, forKey: .scope)
         try container.encode(grantedAt, forKey: .grantedAt)
+        try container.encodeIfPresent(actionIdentity, forKey: .actionIdentity)
     }
 }
 
@@ -324,15 +331,17 @@ public final class HTMLAppPermissionLedger {
         subject: HTMLAppPermissionSubject,
         capability: HTMLAppCapability,
         scope: HTMLAppPermissionScope,
+        actionIdentity: String? = nil,
         grantedAt: Date = Date()
     ) -> HTMLAppPermissionGrant {
         let grant = HTMLAppPermissionGrant(
             subject: subject,
             capability: capability,
             scope: scope,
+            actionIdentity: actionIdentity,
             grantedAt: grantedAt
         )
-        let key = subject.storageKey(capability: capability)
+        let key = subject.storageKey(capability: capability, actionIdentity: actionIdentity)
 
         lock.lock()
         defer { lock.unlock() }
@@ -353,9 +362,10 @@ public final class HTMLAppPermissionLedger {
 
     public func grant(
         for subject: HTMLAppPermissionSubject,
-        capability: HTMLAppCapability
+        capability: HTMLAppCapability,
+        actionIdentity: String? = nil
     ) -> HTMLAppPermissionGrant? {
-        let key = subject.storageKey(capability: capability)
+        let key = subject.storageKey(capability: capability, actionIdentity: actionIdentity)
         lock.lock()
         defer { lock.unlock() }
         return sessionGrants[key] ?? persistentGrants[key]
@@ -381,7 +391,7 @@ public final class HTMLAppPermissionLedger {
         lock.lock()
         defer { lock.unlock() }
         return (Array(sessionGrants.values) + Array(persistentGrants.values))
-            .sorted { $0.subject.storageKey(capability: $0.capability) < $1.subject.storageKey(capability: $1.capability) }
+            .sorted { $0.subject.storageKey(capability: $0.capability, actionIdentity: $0.actionIdentity) < $1.subject.storageKey(capability: $1.capability, actionIdentity: $1.actionIdentity) }
     }
 
     // Compatibility helpers for hosts/tests that have not yet supplied a
@@ -443,7 +453,7 @@ public final class HTMLAppPermissionLedger {
         var proposedPersistent: [String: HTMLAppPermissionGrant] = [:]
         var proposedSession: [String: HTMLAppPermissionGrant] = [:]
         for grant in grants {
-            let key = grant.subject.storageKey(capability: grant.capability)
+            let key = grant.subject.storageKey(capability: grant.capability, actionIdentity: grant.actionIdentity)
             switch grant.scope {
             case .once: continue
             case .appSession: proposedSession[key] = grant
@@ -462,8 +472,8 @@ public final class HTMLAppPermissionLedger {
         sessionGrants = proposedSession
     }
 
-    public func revoke(subject: HTMLAppPermissionSubject, capability: HTMLAppCapability) {
-        let key = subject.storageKey(capability: capability)
+    public func revoke(subject: HTMLAppPermissionSubject, capability: HTMLAppCapability, actionIdentity: String? = nil) {
+        let key = subject.storageKey(capability: capability, actionIdentity: actionIdentity)
         lock.lock()
         let removedSession = sessionGrants.removeValue(forKey: key)
         let removedPersistent = persistentGrants.removeValue(forKey: key)
@@ -521,13 +531,20 @@ public final class HTMLAppPermissionLedger {
         lock.lock()
         func keep(_ entry: (key: String, value: HTMLAppPermissionGrant)) -> Bool {
             guard entry.key.hasPrefix(prefix) else { return true }
+            if let actionIdentity = entry.value.actionIdentity {
+                return manifest.capabilitiesV2.contains {
+                    $0.purposeId == actionIdentity && $0.origins.contains(origin) &&
+                    HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == entry.value.capability &&
+                    $0.scope == entry.value.scope
+                }
+            }
             return manifest.declares(entry.value.capability)
         }
         let revoked = (Array(sessionGrants.values) + Array(persistentGrants.values)).filter {
             $0.subject.gatewayIdentity == gatewayIdentity &&
                 $0.subject.appID == manifest.appID &&
                 $0.subject.origin == origin &&
-                !manifest.declares($0.capability)
+                !keep((key: $0.subject.storageKey(capability: $0.capability, actionIdentity: $0.actionIdentity), value: $0))
         }
         sessionGrants = sessionGrants.filter(keep)
         persistentGrants = persistentGrants.filter(keep)
@@ -684,11 +701,12 @@ public final class HTMLAppCapabilityGateway {
             break
         }
 
-        if let grant = permissionLedger.grant(for: subject, capability: request.capability) {
+        if let grant = permissionLedger.grant(for: subject, capability: request.capability, actionIdentity: request.purposeId) {
             guard declaration == nil || grant.scope == declaration?.scope else {
                 permissionLedger.revoke(
                     subject: subject,
-                    capability: request.capability
+                    capability: request.capability,
+                    actionIdentity: request.purposeId
                 )
                 return result(
                     for: request,
@@ -763,7 +781,8 @@ public final class HTMLAppCapabilityGateway {
                     capability: request.capability,
                     scope: currentDeclaration?.scope == .once && approvedScope == .appSession
                         ? .once
-                        : currentDeclaration?.scope ?? approvedScope
+                        : currentDeclaration?.scope ?? approvedScope,
+                    actionIdentity: currentDeclaration?.purposeId
                 )
                 completion(self.result(for: request, status: .granted, scope: grant.scope))
             case .denied:

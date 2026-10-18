@@ -60,6 +60,7 @@ public enum HTMLAppControlledAction: String, CaseIterable, Codable, Sendable {
     case haptic
     case vibrate
     case share
+    case fullscreen
 }
 
 public struct HTMLAppActionDeclaration: Codable, Equatable, Sendable {

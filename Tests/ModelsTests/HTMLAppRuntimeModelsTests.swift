@@ -72,6 +72,23 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         XCTAssertTrue(manifest.validate().isValid)
     }
 
+    func testFullscreenDeclarationDecodesAndMatchesExactOrigin() throws {
+        let declaration = HTMLAppActionDeclaration(
+            action: .fullscreen,
+            origins: ["https://inventory.example.com"],
+            purposeId: "immersive-display",
+            purpose: "Display the app without browser chrome",
+            scope: .once
+        )
+        let manifest = makeManifest(capabilitiesV2: [declaration])
+        let encoded = try JSONEncoder().encode(manifest)
+        let decoded = try JSONDecoder().decode(HTMLAppManifest.self, from: encoded)
+
+        XCTAssertEqual(decoded.declaration(for: .fullscreen, origin: "https://inventory.example.com"), declaration)
+        XCTAssertNil(decoded.declaration(for: .fullscreen, origin: "https://other.example.com"))
+        XCTAssertTrue(decoded.validate().isValid)
+    }
+
     func testCapabilitiesV2RejectsInvalidMetadataOriginsAndScope() {
         let valid = HTMLAppActionDeclaration(
             action: .share,

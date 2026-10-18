@@ -8,6 +8,30 @@
 
 import Foundation
 import WebKit
+import UIKit
+
+private final class WBKUserGestureRecognizer: UIGestureRecognizer {
+    private let lock = NSLock()
+    private(set) var lastTouchAt: Date?
+
+    func consumeRecentUserGesture() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let lastTouchAt, Date().timeIntervalSince(lastTouchAt) <= 1.5 else { return false }
+        self.lastTouchAt = nil
+        return true
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        lock.lock()
+        lastTouchAt = Date()
+        lock.unlock()
+        state = .failed
+    }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+}
 
 // Framework imports
 
@@ -19,6 +43,8 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     public var nativeHandlers: [String: WebNativeAPI] = [:]  // 改为 public，供 WebTestViewController 访问
     private var handlerFactories: [String: () -> WebNativeAPI] = [:]  // Handler 工厂方法，用于懒加载
     private weak var webView: WKWebView?
+    private var userGestureRecognizer: WBKUserGestureRecognizer?
+    var userGestureValidationOverride: (() -> Bool)?
     private var managedAppID: String?
     private var managedDocumentURL: URL?
     public weak var permissionConsentPresenter: HTMLAppPermissionConsentPresenting?
@@ -64,6 +90,8 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         // 交互反馈
         "haptic",
         "vibrate",
+        // 宿主显示模式
+        "fullscreen",
         // 剪贴板
         "clipboard",
         // 扫码
@@ -289,6 +317,13 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             return
         }
 
+        if let allowedActions = WebBridgeHostCapabilityPolicy.nativeActionAllowlist,
+           !allowedActions.contains(action) {
+            completion(WebBridgeResponse.error(code: 403, message: "Action is not enabled by the host policy"),
+                       body["callbackId"] as? String ?? body["messageId"] as? String)
+            return
+        }
+
         // 获取 callbackId，避免并发时被覆盖。旧版 WebBridge.js 使用 messageId，
         // 这里保留兼容，避免真实 WKWebView Promise 回调无法 resolve。
         let callbackId = body["callbackId"] as? String ?? body["messageId"] as? String
@@ -397,13 +432,24 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             return
         }
 
-        // V2 controlled actions have no local/page trust fallback. They require
-        // an exact signed action declaration before authorization can begin.
+        // Low-impact V2 actions are declared and gesture-bound, but do not
+        // create a reusable privacy grant. Sharing remains user-mediated by
+        // UIActivityViewController; haptics disclose no user data.
         if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action) {
             let capability = HTMLAppBridgeCapabilityPolicy.capability(for: controlledAction)
+            let hasTrustedGesture = userGestureValidationOverride?() ??
+                (UIApplication.shared.applicationState == .active && userGestureRecognizer?.consumeRecentUserGesture() == true)
+            guard hasTrustedGesture else {
+                completion(.denied(Self.authorizationError(
+                    capability: capability,
+                    status: .denied,
+                    message: "请在应用前台通过页面交互发起此操作"
+                )))
+                return
+            }
             guard let registeredAppID = managedAppID,
-                  let declaration = trustRegistry.manifest(for: registeredAppID)?
-                      .declaration(for: controlledAction, origin: origin) else {
+                  trustRegistry.manifest(for: registeredAppID)?
+                      .declaration(for: controlledAction, origin: origin) != nil else {
                 completion(.denied(Self.authorizationError(
                     capability: capability,
                     status: .denied,
@@ -411,64 +457,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
                 )))
                 return
             }
-            let requestID = UUID().uuidString
-            let request = HTMLAppCapabilityRequest(
-                id: requestID,
-                capability: capability,
-                reason: declaration.purpose,
-                scope: declaration.scope,
-                purposeId: declaration.purposeId
-            )
-            guard let subject = permissionSubject(appID: registeredAppID, origin: origin) else {
-                completion(.denied(Self.authorizationError(
-                    capability: capability,
-                    status: .denied,
-                    message: "未配置可信网关，不能调用受保护的原生能力"
-                )))
-                return
-            }
-            let result = capabilityGateway.requestAuthorization(
-                subject: subject,
-                documentURL: documentURL,
-                request: request
-            )
-            switch (result.status, result.authorizationLayer) {
-            case (.granted, _):
-                completion(.allowed)
-            case (.notDetermined, .htmlApp):
-                guard let presenter = permissionConsentPresenter else {
-                    capabilityGateway.cancelPendingRequests(subject: subject)
-                    completion(.denied(Self.authorizationError(
-                        capability: capability,
-                        status: .denied,
-                        message: "无法显示 PWA 权限确认"
-                    )))
-                    return
-                }
-                storePendingAuthorization(PendingAuthorization(
-                    subject: subject,
-                    documentURL: documentURL,
-                    request: request,
-                    completion: completion
-                ))
-                presenter.requestConsent(HTMLAppPermissionConsentRequest(
-                    application: .init(id: registeredAppID, name: URL(string: origin)?.host ?? origin),
-                    requestID: request.id,
-                    origin: origin,
-                    capability: capability,
-                    reason: declaration.purpose
-                )) { [weak self] selectedScope in
-                    self?.finishPendingAuthorization(requestID: request.id, selectedScope: selectedScope)
-                }
-            default:
-                completion(.denied(Self.authorizationError(
-                    capability: capability,
-                    status: result.status,
-                    message: result.status == .requiresSettings
-                        ? "iOS 系统权限已关闭，请前往系统设置开启"
-                        : "PWA 未获得该原生能力授权"
-                )))
-            }
+            completion(.allowed)
             return
         }
 
@@ -815,6 +804,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         // 交互反馈
         handlerFactories["haptic"] = { WebHapticHandler() }
         handlerFactories["vibrate"] = { WebVibrateHandler() }
+        handlerFactories["fullscreen"] = { WebFullscreenHandler() }
 
         // 剪贴板
         handlerFactories["clipboard"] = { WebClipboardHandler() }
@@ -1037,6 +1027,15 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
 
     public func setWebView(_ webView: WKWebView) {
         self.webView = webView
+        if let userGestureRecognizer {
+            webView.removeGestureRecognizer(userGestureRecognizer)
+        }
+        let gestureRecognizer = WBKUserGestureRecognizer()
+        gestureRecognizer.cancelsTouchesInView = false
+        gestureRecognizer.delaysTouchesBegan = false
+        gestureRecognizer.delaysTouchesEnded = false
+        webView.addGestureRecognizer(gestureRecognizer)
+        userGestureRecognizer = gestureRecognizer
         // 为已创建的 Handler 设置 webView（懒加载模式下，Handler 在 getHandler 时自动设置）
         handlersLock.lock()
         let createdHandlers = Array(nativeHandlers.values)
