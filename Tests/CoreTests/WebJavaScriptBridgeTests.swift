@@ -17,6 +17,12 @@ final class WebJavaScriptBridgeTests: XCTestCase {
     private final class NativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding {
         var status: HTMLAppCapabilityResult.Status = .granted
         func authorizationStatus(for capability: HTMLAppCapability) -> HTMLAppCapabilityResult.Status { status }
+        func requestAuthorization(
+            for capability: HTMLAppCapability,
+            completion: @escaping (HTMLAppCapabilityResult.Status) -> Void
+        ) {
+            completion(status)
+        }
     }
 
     private final class ConsentPresenter: HTMLAppPermissionConsentPresenting {
@@ -420,6 +426,101 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         XCTAssertTrue(ledger.grants(for: subject).isEmpty)
     }
 
+    func testDeclaredClipboardUsesActionIdentityAndReusableGrant() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let manifest = try registerV2Manifest(
+            in: registry,
+            action: .clipboard,
+            scope: .always
+        )
+        let presenter = ConsentPresenter()
+        presenter.selectedScope = .always
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: ledger,
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(
+            appID: manifest.appID,
+            documentURL: URL(string: manifest.startURL)
+        )
+        managedBridge.nativeHandlers["clipboard"] = ShareResultStub()
+
+        let first = expectation(description: "first clipboard request prompts")
+        managedBridge.handle(body: [
+            "action": "clipboard",
+            "callbackId": "clipboard-1",
+            "params": ["action": "read"]
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
+            first.fulfill()
+        }
+        wait(for: [first], timeout: 1)
+
+        let second = expectation(description: "second clipboard request uses the grant")
+        managedBridge.handle(body: [
+            "action": "clipboard",
+            "callbackId": "clipboard-2",
+            "params": ["action": "read"]
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
+            second.fulfill()
+        }
+        wait(for: [second], timeout: 1)
+        XCTAssertEqual(presenter.requestCount, 1)
+
+        let origin = try XCTUnwrap(HTMLAppOrigin.canonicalOrigin(forDocumentURL: URL(string: manifest.startURL)!))
+        let subject = HTMLAppPermissionSubject(
+            gatewayIdentity: "test-gateway",
+            appID: manifest.appID,
+            origin: origin
+        )
+        XCTAssertNotNil(ledger.grant(for: subject, capability: .clipboard, actionIdentity: "v2-purpose"))
+    }
+
+    func testLocationWithoutSignedDeclarationIsDeniedEvenWithLegacyCapability() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let manifest = HTMLAppManifest(
+            appID: "com.example.v2",
+            name: "Legacy location",
+            startURL: "https://bridge.example.com/index.html",
+            allowedOrigins: ["https://bridge.example.com"],
+            capabilities: [.location],
+            routes: ["/index.html"],
+            cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false)
+        )
+        try registry.register(manifest)
+        let presenter = ConsentPresenter()
+        presenter.selectedScope = .always
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: ledger,
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(
+            appID: manifest.appID,
+            documentURL: URL(string: manifest.startURL)
+        )
+        managedBridge.nativeHandlers["getLocation"] = ShareResultStub()
+
+        let completed = expectation(description: "undeclared location denied")
+        managedBridge.handle(body: [
+            "action": "getLocation",
+            "callbackId": "location-denied"
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["status"] as? String, "denied")
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(presenter.requestCount, 0)
+    }
+
     func testManagedPWAConsentCanBeCancelledBeforeHandlerRuns() throws {
         let storage = MemoryStorage()
         let registry = HTMLAppTrustRegistry(storage: storage)
@@ -430,6 +531,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             startURL: "https://bridge.example.com/index.html",
             allowedOrigins: ["https://bridge.example.com"],
             capabilities: [.clipboard],
+            capabilitiesV2: [Self.clipboardDeclaration],
             routes: ["/index.html"],
             cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false)
         )
@@ -471,6 +573,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             startURL: "https://bridge.example.com/index.html",
             allowedOrigins: ["https://bridge.example.com"],
             capabilities: [.clipboard],
+            capabilitiesV2: [Self.clipboardDeclaration],
             routes: ["/index.html"],
             cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false)
         )
@@ -501,7 +604,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
 
         let documentURL = try XCTUnwrap(URL(string: manifest.startURL))
         let origin = try XCTUnwrap(HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL))
-        XCTAssertEqual(ledger.grant(for: manifest.appID, origin: origin, capability: .clipboard)?.scope, .always)
+        XCTAssertEqual(ledger.grants(for: manifest.appID).first { $0.capability == .clipboard }?.scope, .always)
 
         let second = expectation(description: "second bridge completion")
         managedBridge.handle(body: [
@@ -637,12 +740,21 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             startURL: "https://bridge.example.com/index.html",
             allowedOrigins: ["https://bridge.example.com"],
             capabilities: [.clipboard, .camera],
+            capabilitiesV2: [Self.clipboardDeclaration],
             routes: ["/index.html"],
             cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false)
         )
         try registry.register(manifest)
         return manifest
     }
+
+    private static let clipboardDeclaration = HTMLAppActionDeclaration(
+        action: .clipboard,
+        origins: ["https://bridge.example.com"],
+        purposeId: "bridge-clipboard",
+        purpose: "Read and write clipboard values for the demo",
+        scope: .always
+    )
 }
 
 import WebKit

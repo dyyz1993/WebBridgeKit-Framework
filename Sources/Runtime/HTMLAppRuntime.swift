@@ -670,7 +670,11 @@ public final class HTMLAppCapabilityGateway {
             return result(for: request, status: .denied, failureReason: .originMismatch)
         }
 
-        let declaration = request.purposeId.flatMap { purposeID -> HTMLAppActionDeclaration? in
+        let declaration = Self.declaration(
+            for: request,
+            manifest: manifest,
+            origin: subject.origin
+        ) ?? request.purposeId.flatMap { purposeID -> HTMLAppActionDeclaration? in
             manifest.capabilitiesV2.first { $0.purposeId == purposeID }
         }
         if let declaration,
@@ -717,14 +721,24 @@ public final class HTMLAppCapabilityGateway {
             return result(for: request, status: .granted, scope: grant.scope)
         }
 
-        lock.lock()
-        pendingRequests[pendingKey(subject: subject, requestID: request.id)] = PendingRequest(
-            subject: subject,
-            capability: request.capability,
-            documentOrigin: documentOrigin
-        )
-        lock.unlock()
-        return result(for: request, status: .notDetermined, authorizationLayer: .htmlApp)
+        // Grant-based V2 actions must still match a signed declaration before
+        // we allow a consent panel at all.
+        if let actionDeclaration = Self.declaration(
+            for: request,
+            manifest: manifest,
+            origin: subject.origin
+        ) {
+            lock.lock()
+            pendingRequests[pendingKey(subject: subject, requestID: request.id)] = PendingRequest(
+                subject: subject,
+                capability: request.capability,
+                documentOrigin: documentOrigin
+            )
+            lock.unlock()
+            return result(for: request, status: .notDetermined, authorizationLayer: .htmlApp)
+        } else {
+            return result(for: request, status: .denied, failureReason: .undeclaredCapability, authorizationLayer: .htmlApp)
+        }
     }
 
     /// Completes a pending consent request. On acceptance this triggers the
@@ -742,6 +756,14 @@ public final class HTMLAppCapabilityGateway {
         lock.lock()
         let pendingRequest = pendingRequests.removeValue(forKey: key)
         lock.unlock()
+
+        // A grant-based V2 action must still match a signed declaration at
+        // consent resolution time. Legacy capabilities are not accepted here.
+        if let manifest = trustRegistry.manifest(for: subject.appID),
+           Self.declaration(for: request, manifest: manifest, origin: subject.origin) == nil {
+            completion(result(for: request, status: .denied, failureReason: .undeclaredCapability, authorizationLayer: .htmlApp))
+            return
+        }
 
         guard granted else {
             completion(result(for: request, status: .denied, failureReason: .userCancelled, authorizationLayer: .htmlApp))
@@ -762,7 +784,11 @@ public final class HTMLAppCapabilityGateway {
             completion(result(for: request, status: .denied, failureReason: .originMismatch, authorizationLayer: .htmlApp))
             return
         }
-        let currentDeclaration = request.purposeId.flatMap { purposeID -> HTMLAppActionDeclaration? in
+        let currentDeclaration = Self.declaration(
+            for: request,
+            manifest: manifest,
+            origin: subject.origin
+        ) ?? request.purposeId.flatMap { purposeID -> HTMLAppActionDeclaration? in
             manifest.capabilitiesV2.first { $0.purposeId == purposeID }
         }
         if let currentDeclaration,
@@ -779,9 +805,7 @@ public final class HTMLAppCapabilityGateway {
                 let grant = self.permissionLedger.grant(
                     subject: subject,
                     capability: request.capability,
-                    scope: currentDeclaration?.scope == .once && approvedScope == .appSession
-                        ? .once
-                        : currentDeclaration?.scope ?? approvedScope,
+                    scope: currentDeclaration?.scope ?? (approvedScope == .once ? .once : .always),
                     actionIdentity: currentDeclaration?.purposeId
                 )
                 completion(self.result(for: request, status: .granted, scope: grant.scope))
@@ -808,6 +832,20 @@ public final class HTMLAppCapabilityGateway {
                 ))
             }
         }
+    }
+
+    private static func declaration(
+        for request: HTMLAppCapabilityRequest,
+        manifest: HTMLAppManifest,
+        origin: String
+    ) -> HTMLAppActionDeclaration? {
+        let action: HTMLAppControlledAction?
+        switch request.capability {
+        case .clipboard: action = .clipboard
+        case .location: action = .location
+        default: action = nil
+        }
+        return action.flatMap { manifest.declaration(for: $0, origin: origin) }
     }
 
     /// Safely drops pending consent requests, e.g. when the PWA navigates to a

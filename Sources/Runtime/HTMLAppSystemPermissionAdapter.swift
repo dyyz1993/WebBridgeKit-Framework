@@ -67,7 +67,7 @@ public final class HTMLAppSystemPermissionAdapter: HTMLAppNativeAuthorizationPro
                 return .notDetermined
             }
         case .biometrics, .contacts, .deviceControl, .displayStatus, .motion,
-             .clipboard, .fileExport, .fileImport, .share:
+             .clipboard, .fileExport, .fileImport, .homeScreen, .share:
             // No iOS system authorization gate ahead of the branded panel.
             return .granted
         }
@@ -97,7 +97,7 @@ public final class HTMLAppSystemPermissionAdapter: HTMLAppNativeAuthorizationPro
         case .bluetooth:
             requestBluetooth(completion)
         case .biometrics, .contacts, .deviceControl, .displayStatus, .motion,
-             .clipboard, .fileExport, .fileImport, .share:
+             .clipboard, .fileExport, .fileImport, .homeScreen, .share:
             completion(.granted)
         }
     }
