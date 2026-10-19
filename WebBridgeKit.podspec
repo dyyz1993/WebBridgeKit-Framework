@@ -7,10 +7,10 @@ Pod::Spec.new do |s|
     actor-based push/message routing engine, WebSocket JSON-RPC 2.0 client, AI MCP debug interface,
     and design token theme engine for iOS host applications.
   DESC
-  s.homepage         = 'https://github.com/dyyz1993/WebBridgeKit'
+  s.homepage         = 'https://github.com/dyyz1993/WebBridgeKit-Framework'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'WebBridgeKit Team' => 'dev@webbridgekit.org' }
-  s.source           = { :git => 'https://github.com/dyyz1993/WebBridgeKit.git', :tag => s.version.to_s }
+  s.source           = { :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => s.version.to_s }
 
   s.ios.deployment_target = '15.0'
   s.swift_version = '5.9'

@@ -11,7 +11,7 @@ iOS 原生增强 PWA 运行时底层框架 SDK（`WebBridgeKit`）与最小宿�
 - **`AppTemplate/`（最小宿主起点）**：演示如何安全初始化并接入 `WebBridgeKit` SDK 的最小宿主工程，不包含任何测试硬编码凭据、不默认自启后台调试服务，亦不耦合上层业务 UI。
 - **`Tests/`（单元测试矩阵）**：包含 19 个单元测试 Target（`BridgeTests`、`CacheTests`、`MessageTests`、`HandlerTests`、`CoreTests`、`ModelsTests` 等共 168 个测试文件）。
 
-> 上层完整产品应用（`SuperApp` / `Drel`）、通知服务扩展（`NotificationServiceExtension`）、UI 自动化测试（`SuperAppUITests`）及后端服务（`Server/`）已独立拆分至上层应用工程 `WebBridgeKit-App`。
+> 上层完整产品应用（Target 为 `Drel`，源码目录为 `SuperApp/`）、通知服务扩展（`NotificationServiceExtension`）、UI 自动化测试（`DrelUITests`）及后端服务（`Server/`）已独立拆分至同级 [Drel 仓库](https://github.com/dyyz1993/Drel)。两个开发仓库目前均为私有仓库，需要相应 GitHub 访问权限；旧公开 `WebBridgeKit` 仓库仅保留历史代码和公开技能分发。
 
 ## 2. 宿主注入与解耦契约（Phase 1 解耦落地）
 
@@ -45,7 +45,7 @@ bash tools/design-lint.sh --ci
 bash tools/ci-lint.sh
 ```
 
-### 方式 B：供上层应用工程（`WebBridgeKit-App`）通过 CocoaPods 联调接入
+### 方式 B：供上层应用工程（`Drel`）通过 CocoaPods 联调接入
 
 在上层应用的 `Podfile` 中通过本地路径或 Git 版本引入：
 

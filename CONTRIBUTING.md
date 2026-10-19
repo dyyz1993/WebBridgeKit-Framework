@@ -1,75 +1,224 @@
-# Contributing to WebBridgeKit
+# Contributing to WebBridgeKit (Framework)
+
+This repository is the **standalone WebBridgeKit framework repo** (`WebBridgeKit-Framework`),
+split out of the original `WebBridgeKit` monorepo per ADR-0002 / ADR-0006
+(see `docs/repository-split.md`). It contains only the reusable SDK, the minimal
+host template, and the SDK unit-test matrix.
+
+**This is a private repository.** Clone and push require SSH keys or GitHub
+access granted to `dyyz1993/WebBridgeKit-Framework`. There is no fork-based
+workflow — contributors work on branches inside this repo.
+
+**The product app is a sibling repo, not this repo.** `Drel`
+(`github.com/dyyz1993/Drel`, checked out side-by-side with this repo) owns the
+`Drel` product target (source directory `SuperApp/`), the `Server/` backend,
+`NotificationServiceExtension`, and `DrelUITests`. Do **not** look for a
+`SuperApp` scheme here — this repo has none. Some legacy scripts still mention
+`SuperApp` (see "Known monorepo leftovers" below); the gates listed in this
+guide are the ones that work against the framework alone.
 
 ## Development Environment Setup
 
 ### Prerequisites
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Xcode | 15+ | Mac App Store |
-| CocoaPods | Latest | `sudo gem install cocoapods` |
-| XcodeGen | Latest | `brew install xcodegen` |
-| SwiftLint | Latest | `brew install swiftlint` |
-| xcpretty | Latest | `gem install xcpretty --no-document` |
-| XcodeBuildMCP | Latest | `npm install -g xcodebuildmcp@latest` |
+| Tool | Install | Notes |
+|------|---------|-------|
+| Xcode | Mac App Store | iOS 15+ SDK |
+| CocoaPods | `sudo gem install cocoapods` | Workspace dependencies |
+| XcodeGen | `brew install xcodegen` | Generates `WebBridgeKit.xcodeproj` from `project.yml` |
+| SwiftLint | `brew install swiftlint` | `.swiftlint.yml` |
+| xcpretty | `gem install xcpretty --no-document` | Used by `scripts/bootstrap-dev.sh` |
+
+`bash scripts/bootstrap-dev.sh --install-tools` attempts to install missing
+tools via Homebrew/gem automatically.
 
 ### Setup
 
 ```bash
-git clone https://github.com/dyyz1993/WebBridgeKit.git
-cd WebBridgeKit
+git clone git@github.com:dyyz1993/WebBridgeKit-Framework.git
+cd WebBridgeKit-Framework
 bash scripts/bootstrap-dev.sh --no-services
 open WebBridgeKit.xcworkspace
 ```
 
-如果你希望把本地测试服务也一起拉起来，直接运行：
+`scripts/bootstrap-dev.sh` installs git hooks, runs `xcodegen generate`,
+runs `pod install`, verifies the toolchain, and (unless `--no-services`) starts
+local services. Useful options:
 
 ```bash
-bash scripts/bootstrap-dev.sh
+bash scripts/bootstrap-dev.sh --no-services        # skip local services
+bash scripts/bootstrap-dev.sh --no-hooks           # skip git hooks
+bash scripts/bootstrap-dev.sh --install-tools      # auto-install missing tools
 ```
+
+### Project Generation
+
+- `WebBridgeKit.xcodeproj/` is generated and ignored. **`project.yml` is the
+  source of truth.**
+- After changing `project.yml`, run `xcodegen generate && pod install` before
+  any build or verification gate. Skipping `pod install` breaks resolution of
+  CocoaPods modules (SnapKit, RxSwift/RxCocoa, Moya, SwiftSoup, RealmSwift,
+  ZIPFoundation).
 
 ## How to Build
 
 ```bash
-# Generate Xcode project from project.yml
 xcodegen generate
-
-# Install CocoaPods dependencies
 pod install
 
-# Build from CLI
+# Framework (SDK)
 xcodebuild build \
   -workspace WebBridgeKit.xcworkspace \
-  -scheme SuperApp \
+  -scheme WebBridgeKit \
   -sdk iphonesimulator \
   -arch arm64 \
-  -configuration Debug \
-  CODE_SIGN_IDENTITY="" \
-  CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGNING_ALLOWED=NO \
-  | xcpretty --color
+  CODE_SIGNING_ALLOWED=NO
+
+# Minimal host template
+xcodebuild build \
+  -workspace WebBridgeKit.xcworkspace \
+  -scheme AppTemplate \
+  -sdk iphonesimulator \
+  -arch arm64 \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+These are exactly the two build steps CI runs (`.github/workflows/ci.yml`).
+
+### Known monorepo leftovers
+
+The following still reference the old monorepo `SuperApp` scheme/target and
+will not work against this repo alone; use the gates and commands in this
+guide instead until they are cleaned up:
+
+- `scripts/verify-build.sh` (builds `-scheme SuperApp`)
+- `./run_tests.sh` (`smoke`/`test` subcommands route through it)
+- `tools/run-cache-regression.sh` UI portion (runs `SuperAppUITests/CacheDashboardTests`)
+
+## Testing Requirements
+
+Tests are unit tests against the SDK schemes only. Each module has its own
+Xcode scheme generated from `project.yml`.
+
+```bash
+# Single module (example: Cache)
+xcodebuild test \
+  -workspace WebBridgeKit.xcworkspace \
+  -scheme CacheTests \
+  -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+  CODE_SIGNING_ALLOWED=NO
+
+# Handler matrix (split for CI stability)
+xcodebuild test -workspace WebBridgeKit.xcworkspace \
+  -scheme HandlerTests-Part1 -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' CODE_SIGNING_ALLOWED=NO
+```
+
+CI groups the same schemes into four matrix jobs (`.github/workflows/ci.yml`,
+`unit-tests`): **CoreA** (CacheTests, BridgeTests, CoreTests), **CoreB**
+(ModelsTests, UtilsTests, ServicesTests), **Handlers** (HandlerTests-Part1,
+HandlerTests-Part2, CommandParserTests, WebSocketTests, SkillsTests), and
+**Modules** (MessageTests, AITests, InfrastructureTests, BaseTests,
+ExtensionsTests, ManagersTests, ViewModelTests, WebBridgeKitTests).
+`ThemeTests` also exists as a local scheme.
+
+- **All new SDK code must have tests.** Test files live in `Tests/<Module>Tests/`
+  organized by module; naming: `XxxTests.swift`.
+- Adding a new module: create the source target **and** the test target in
+  `project.yml`, then `xcodegen generate && pod install`.
+
+### Test Directory Structure
+
+```
+Tests/
+├── AITests/
+├── BaseTests/
+├── BridgeTests/
+├── CacheDashboard/
+├── CacheTests/
+├── CommandParserTests/
+├── CoreTests/
+├── ExtensionsTests/
+├── HandlerTests/
+├── Infrastructure/
+├── ManagersTests/
+├── MessageTests/
+├── ModelsTests/
+├── ServicesTests/
+├── SkillsTests/
+├── ThemeTests/
+├── UtilsTests/
+├── ViewModelTests/
+├── WebBridgeKitTests/
+├── WebSocketTests/
+└── e2e/
+```
+
+## Local Services (Optional)
+
+SDK unit tests do not require services. Cache/offline fixture verification
+does. `scripts/services.sh` starts:
+
+| Service | Port | Source in the split setup |
+|---------|------|---------------------------|
+| Swift backend (`WebBridgeServer`) | 8080 | **Sibling `Drel` repo** — point at it with `DREL_APP_ROOT=/path/to/Drel` |
+| Test HTTP server (repo root + `test_resources/`) | 8081 | This repo |
+| Prototype HTML server (`docs/prototype/`) | 8083 | This repo (or `Drel` when `DREL_APP_ROOT` is set) |
+
+```bash
+export DREL_APP_ROOT=/path/to/Drel   # needed only for the :8080 backend
+bash scripts/services.sh start       # or stop / status / verify / logs
+bash tools/verify-strong-offline-package.sh   # offline-package fixture vs :8081
 ```
 
 ## Code Style
 
-We use [SwiftLint](https://github.com/realm/SwiftLint) with rules defined in `.swiftlint.yml`.
+We use [SwiftLint](https://github.com/realm/SwiftLint) with `.swiftlint.yml`.
+Notable configuration:
 
-### Key Rules
+- **Line length** warning 300 / error 500; **file length** warning 600 / error 1000.
+- **Opt-in rules**: `empty_count`, `closure_spacing`, `explicit_init`,
+  `overridden_super_call`, `private_outlet`, `prohibited_super_call`,
+  `vertical_parameter_alignment`, `first_where`.
+- **Custom design rules** (warnings):
+  - No hardcoded `UIColor(red:...)` or `.systemBlue`-style system colors —
+    use `ThemeTokens.Color.*` (auto light/dark).
+  - No static `ThemeTokens.Colors.Light/Dark.*` tokens (no dark-mode support).
+  - Prefer `LucideIcon.*.image()` over SF Symbols (`UIImage(systemName:)`).
+  - Prefer `ThemeTokens.Typography.*` / Dynamic Type over fixed `UIFont.systemFont(ofSize:)`.
 
-- **No `any` type** — use `unknown` and narrow with type checks
-- **Explicit return types** on all public functions
-- **No empty `catch` blocks** — handle or log every error
-- **Files over 100 lines** — consider splitting
-- **No force casts (`as!`)** in production code
-- **No force tries (`try!`)** in production code
+Design tokens live in `docs/design-tokens.json` (single source of truth) and
+sync into Swift via `bash tools/sync-tokens.sh`.
 
 ### Lint
 
 ```bash
-swiftlint lint --config .swiftlint.yml Sources/ SuperApp/Sources/
+swiftlint --quiet
+bash tools/ci-lint.sh   # full design-system wrapper: colors, icons, fonts,
+                        # token JSON, touch targets, deliverable boundaries
 ```
 
-CI runs SwiftLint as the first job. Fix all warnings before pushing.
+CI runs SwiftLint and the lint workflows (`.github/workflows/architecture-lint.yml`,
+`.github/workflows/design-lint.yml`) on every push. Fix warnings before pushing.
+
+## Verification Gates
+
+Run the gates relevant to your change before opening a PR:
+
+| Gate | Command |
+|------|---------|
+| Deliverable boundaries (SDK vs template vs product app) | `bash tools/verify-deliverable-boundaries.sh` |
+| AppTemplate readiness | `bash tools/run-template-gate.sh` |
+| Architecture lint | `bash tools/architecture-lint.sh --ci` |
+| Design lint | `bash tools/design-lint.sh --ci` |
+| Cached HTML fixtures | `bash tools/validate-cache-html.sh` |
+| Offline-package fixture | `bash tools/verify-strong-offline-package.sh` |
+
+Boundary rules enforced by `verify-deliverable-boundaries.sh`: SDK sources in
+`Sources/` must not import product code or product-only pods; this repo must
+not contain `SuperApp/`, `NotificationServiceExtension/`, or `Server/` — those
+belong to the `Drel` sibling repo.
 
 ## Commit Messages
 
@@ -86,147 +235,97 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 **Examples:**
 
 ```
-feat(bridge): add NFC handler
+feat(bridge): gate managed actions by gesture
 fix(cache): resolve manifest race condition
 test(message): add channel pipeline tests
-ci: add code coverage reporting
+docs: update integration guide
 ```
 
 ## Pull Request Process
 
-1. **Fork** the repository and create a feature branch from `develop`
-2. **Write tests** for all new code (see Testing Requirements below)
-3. **Run lint** locally: `swiftlint lint --config .swiftlint.yml Sources/ SuperApp/Sources/`
-4. **Open a PR** against `develop`
-5. **CI must pass** — all jobs in the pipeline must be green
-6. **At least one review** from a maintainer before merge
-7. **Squash merge** into `develop`
-
-### PR Title Format
-
-Same as commit messages: `feat(scope): description`
-
-## Testing Requirements
-
-- **All new code must have tests.** No exceptions.
-- Tests are **co-located** with source: test files live in `Tests/` organized by module
-- Test file naming: `XxxTests.swift` (e.g., `CacheManagerTests.swift`)
-- Run tests before pushing:
-
-```bash
-# Unit tests (all modules)
-xcodebuild test \
-  -workspace WebBridgeKit.xcworkspace \
-  -scheme CacheTests \
-  -sdk iphonesimulator \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-
-# Integration tests
-./run_tests.sh
-
-# Specific module
-./run_tests.sh basic
-./run_tests.sh manifest
-```
-
-### Test Directory Structure
-
-```
-Tests/
-├── AITests/            # AI Engine tests
-├── BridgeTests/        # Bridge Engine tests
-├── CacheTests/         # Cache Engine tests
-├── CoreTests/          # Core module tests
-├── HandlerTests/       # Handler tests
-├── Infrastructure/     # Infrastructure tests
-├── MessageTests/       # Message Engine tests
-├── ModelsTests/        # Model tests
-├── ServicesTests/      # Service tests
-├── SkillsTests/        # Skills Engine tests
-├── UtilsTests/         # Utility tests
-├── WebBridgeKitTests/  # Framework integration tests
-└── e2e/                # End-to-end tests
-```
-
-When adding a new module, create a corresponding `XxxTests/` directory and add the test target to `project.yml`.
+1. Branch from `main` (e.g. `feat/bridge-xyz`) and push to `origin` — this is
+   a private repo, so there is no fork workflow.
+2. Write/update unit tests for all SDK changes.
+3. Run `swiftlint --quiet` and the relevant verification gates locally.
+4. Open a PR against `main`. PR titles follow the commit format:
+   `feat(scope): description`.
+5. CI must pass: SwiftLint, Build (WebBridgeKit + AppTemplate + boundary
+   check), the unit-test matrix, and the architecture/design lint workflows.
+6. At least one maintainer review before merge.
 
 ## Architecture Overview
 
-Three-layer architecture, bottom-up:
-
 ```
-┌─────────────────────────────────────────────────┐
-│                  SuperApp                        │  Business App Layer
-│           (business code, routing, config)       │
-├─────────────────────────────────────────────────┤
-│                 AppTemplate                      │  App Template Layer
-│     (AppDelegate, RootVC, TabBar templates)      │
-├─────────────────────────────────────────────────┤
-│                WebBridgeKit                      │  Framework Layer
-│  ┌──────┬──────┬──────┬──────┬──────┬──────┐    │
-│  │Bridge│Cache │Message│ AI  │Theme │Skills│    │
-│  └──────┴──────┴──────┴──────┴──────┴──────┘    │
-│           41 Handlers · Core · Services          │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Host apps                                        │
+│  Drel product app (sibling repo) · your own app   │
+├──────────────────────────────────────────────────┤
+│  AppTemplate                                      │
+│  Minimal host scaffold (AppDelegate/Root/TabBar)  │
+├──────────────────────────────────────────────────┤
+│  WebBridgeKit SDK                                 │
+│  ┌──────┬──────┬───────┬────┬──────┬──────┐      │
+│  │Bridge│Cache │Message│ AI │Theme │Skills│      │
+│  └──────┴──────┴───────┴────┴──────┴──────┘      │
+│  WebSocket · CommandParser · 41 Handlers          │
+│  Runtime/ (HTML app runtime) · Services/          │
+└──────────────────────────────────────────────────┘
 ```
 
-- **Framework Layer** — `WebBridgeKit` static library containing all engines and handlers
-- **App Template Layer** — `AppTemplate/` scaffold for new apps (AppDelegate/RootVC/TabBar)
-- **SuperApp Layer** — `SuperApp/` sample/host app demonstrating full usage
+### Engines
 
-### Six Engines
-
-| Engine | Core Class | Purpose |
-|--------|-----------|---------|
-| Bridge Engine | `WebJavaScriptBridge` | JS ↔ Native bidirectional communication |
-| Cache Engine | `CacheManager` / `ManifestCacheManager` | 3-tier cache (Memory/Disk/Manifest offline) |
-| Message Engine | `MessageEngine` | Push notifications + processor pipeline + routing |
-| AI Engine | `AIHTTPServer` / `AIRouter` | Local HTTP API + MCP tool protocol |
-| Theme Engine | `ThemeManager` | Light/dark theme switching |
-| Skills Engine | `SkillRegistry` | Pluggable skill modules |
+| Engine | Core Classes | Purpose |
+|--------|--------------|---------|
+| Bridge | `WebJavaScriptBridge` | JS ↔ Native bidirectional communication |
+| Cache | `CacheManager` / `ManifestCacheManager` | 3-tier cache (memory / disk / manifest offline) |
+| Message | `MessageEngine` | Push notifications, processor pipeline, routing |
+| AI | `AIHTTPServer` / `AIRouter` | Local HTTP API + MCP tool protocol |
+| Theme | `ThemeManager` | Design-token theming, light/dark |
+| Skills | `SkillRegistry` | Pluggable skill modules |
 
 ## Directory Structure
 
 ```
-WebBridgeKit/
-├── Sources/                    # Framework source code
-│   ├── AI/                     # AI Engine (Router, Server, Tools)
-│   ├── Base/                   # Base classes (ViewController, ViewModel)
-│   ├── Bridge/                 # Bridge Engine (Error, Meta, Registry)
-│   ├── Cache/                  # Cache Engine (Memory/Disk/Manifest)
-│   ├── Controllers/            # View Controllers
-│   ├── Core/                   # Core (WebBridgePool, WebJavaScriptBridge)
-│   ├── Extensions/             # Swift extensions
-│   ├── Handlers/               # 41 native capability handlers
-│   ├── Infrastructure/         # Logging, debugging, diagnostics
-│   ├── Managers/               # Managers
-│   ├── Message/                # Message Engine (Channels, Processors)
-│   ├── Models/                 # Data models
-│   ├── Services/               # Service layer (DI + Mock)
-│   ├── Skills/                 # Skills Engine
-│   ├── Theme/                  # Theme Engine
-│   ├── Utils/                  # Utilities
-│   ├── ViewModels/             # ViewModels
-│   ├── Views/                  # UI components
-│   └── WebBridgeKit.swift      # Framework entry point
-├── AppTemplate/                # App template scaffold
-│   └── Sources/
-│       ├── AppDelegate.swift
-│       ├── RootViewController.swift
-│       └── TabBarController.swift
-├── SuperApp/                   # Sample application
-│   ├── Sources/
-│   └── Resources/
-├── Tests/                      # Test targets
-├── SuperAppUITests/            # UI tests
-├── Resources/                  # Framework resources (WebBridge.js)
-├── docs/                       # Documentation
-├── scripts/                    # Build/test scripts
-├── test-server/                # Local test HTTP server
-├── .github/
-│   ├── workflows/              # CI/CD (ci.yml, build-ipa.yml)
-│   └── actions/                # Composite actions (setup-sim, setup-project)
-├── project.yml                 # XcodeGen project spec
-├── Podfile                     # CocoaPods dependencies
-└── .swiftlint.yml              # SwiftLint configuration
+WebBridgeKit-Framework/
+├── Sources/                  # SDK source (engines, handlers, runtime, services)
+├── Resources/                # WebBridge.js, js/ debug scripts, PrivacyInfo.xcprivacy
+├── AppTemplate/              # Minimal host template app
+├── Tests/                    # Per-module unit test targets
+├── tools/                    # Verification gates and linters
+├── scripts/                  # bootstrap-dev.sh, services.sh, dev utilities
+├── test_resources/           # Local fixtures for cache/offline verification
+├── docs/                     # ADRs, architecture, repository-split, design tokens
+├── Package.swift             # SPM products: WebBridgeKit, WBKMessage
+├── project.yml               # XcodeGen project spec (source of truth)
+├── Podfile                   # CocoaPods dependencies
+├── WebBridgeKit.podspec      # CocoaPods spec (source git + tag)
+└── .swiftlint.yml            # SwiftLint configuration
 ```
+
+## Consuming the SDK (from `Drel` or another host)
+
+CocoaPods (development, local path — see README):
+
+```ruby
+pod 'WebBridgeKit', :path => ENV.fetch('WBK_FRAMEWORK_PATH', '../WebBridgeKit-Framework')
+```
+
+CocoaPods (a future tagged release, after publishing the matching SDK tag):
+
+```ruby
+pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.0'
+```
+
+Swift Package Manager: this repo's `Package.swift` exposes the `WebBridgeKit`
+and `WBKMessage` library products.
+
+The podspec currently declares `1.4.0`, but the new repository had no remote
+release tags at the 2026-10-19 audit. Use the local-path setup above until a
+matching tag is deliberately published; changing the source URL alone does
+not make the tagged example installable. Repository access is required.
+
+## Further Reading
+
+- `README.md` — repo positioning, host-injection contracts, integration modes
+- `docs/repository-split.md` + `docs/adr/` — the split decision and boundaries
+- `docs/ARCHITECTURE.md` — SDK architecture details
