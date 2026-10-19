@@ -22,6 +22,7 @@ extension HTMLAppCapability {
         case .displayStatus: return "投屏状态"
         case .fileExport: return "文件导出"
         case .fileImport: return "文件导入"
+        case .homeScreen: return "添加到主页"
         case .location: return "位置"
         case .microphone: return "麦克风"
         case .motion: return "运动传感器"
@@ -43,6 +44,7 @@ extension HTMLAppCapability {
         case .displayStatus: return .network
         case .fileExport: return .download
         case .fileImport: return .upload
+        case .homeScreen: return .home
         case .location: return .pin
         case .microphone: return .mic
         case .motion: return .compass

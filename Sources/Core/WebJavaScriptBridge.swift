@@ -96,6 +96,8 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         "clipboard",
         // 扫码
         "scan",
+        // 添加到主页（宿主注册实现）
+        "addToHomeScreen",
         // 相机
         "camera",
         // 视频流
@@ -432,10 +434,11 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             return
         }
 
-        // Low-impact V2 actions are declared and gesture-bound, but do not
-        // create a reusable privacy grant. Sharing remains user-mediated by
-        // UIActivityViewController; haptics disclose no user data.
-        if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action) {
+        // V2 actions are signed declarations and foreground gestures. Low
+        // impact actions do not create reusable privacy grants; clipboard and
+        // location continue through the grant gateway below.
+        if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action),
+           !HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(controlledAction) {
             let capability = HTMLAppBridgeCapabilityPolicy.capability(for: controlledAction)
             let hasTrustedGesture = userGestureValidationOverride?() ??
                 (UIApplication.shared.applicationState == .active && userGestureRecognizer?.consumeRecentUserGesture() == true)
@@ -513,11 +516,20 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         let params = body["params"] as? [String: Any] ?? body
         let requestID = UUID().uuidString
         let reason = (params["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let managedDeclaration: HTMLAppActionDeclaration?
+        if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action),
+           let registeredAppID = managedAppID {
+            managedDeclaration = trustRegistry.manifest(for: registeredAppID)?
+                .declaration(for: controlledAction, origin: origin)
+        } else {
+            managedDeclaration = nil
+        }
         let request = HTMLAppCapabilityRequest(
             id: requestID,
             capability: capability,
             reason: reason?.isEmpty == false ? reason! : "使用\(capability.displayName)完成当前操作",
-            scope: .once
+            scope: .once,
+            purposeId: managedDeclaration?.purposeId
         )
         // page.*（meta 声明身份）与 local.* 同属本地信任层：
         // 不依赖网关注册，直接走系统层检查 + 账本 + 品牌面板
@@ -794,6 +806,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     private func registerHandlerFactories() {
         // 基础功能
         handlerFactories["share"] = { WebShareHandler() }
+        handlerFactories["addToHomeScreen"] = { WebAddToHomeScreenHandler() }
         handlerFactories["getLocation"] = { WebLocationHandler() }
         handlerFactories["requestPermission"] = { WebPermissionHandler() }
 

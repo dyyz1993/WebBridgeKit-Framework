@@ -18,6 +18,7 @@ public enum HTMLAppCapability: String, CaseIterable, Codable, Sendable {
     case displayStatus
     case fileExport
     case fileImport
+    case homeScreen
     case location
     case microphone
     case motion
@@ -37,6 +38,7 @@ public enum HTMLAppCapability: String, CaseIterable, Codable, Sendable {
         case .displayStatus: return "投屏状态"
         case .fileExport: return "导出文件"
         case .fileImport: return "读取文件"
+        case .homeScreen: return "添加到主页"
         case .location: return "位置"
         case .microphone: return "麦克风"
         case .motion: return "运动传感器"
@@ -61,6 +63,9 @@ public enum HTMLAppControlledAction: String, CaseIterable, Codable, Sendable {
     case vibrate
     case share
     case fullscreen
+    case clipboard
+    case location
+    case addToHomeScreen
 }
 
 public struct HTMLAppActionDeclaration: Codable, Equatable, Sendable {
@@ -496,7 +501,14 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
                 || !declarationOrigins.allSatisfy(canonicalOrigins.contains) {
                 return [.invalidActionDeclarations]
             }
-            if declaration.scope == .always {
+            // Clipboard and location are the only user-data grants; their
+            // declaration sets the allowed scope and consent records exactly
+            // that scope. Other V2 actions remain non-persistent.
+            if HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(declaration.action) {
+                if declaration.scope == .once || declaration.scope == .appSession {
+                    return [.invalidActionDeclarations]
+                }
+            } else if declaration.scope == .always {
                 return [.invalidActionDeclarations]
             }
         }
@@ -636,7 +648,14 @@ public struct HTMLAppCapabilityRequest: Codable, Equatable, Sendable {
         guard !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .rejected(.missingReason)
         }
-        guard manifest.declares(capability) else {
+        // Grant-based V2 actions declare through capabilities_v2 rather than
+        // the broad legacy capability array.
+        let isGrantBasedV2 = capability == .clipboard || capability == .location
+            ? manifest.capabilitiesV2.contains {
+                HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == capability
+            }
+            : false
+        guard manifest.declares(capability) || isGrantBasedV2 else {
             return .rejected(.undeclaredCapability(capability))
         }
         return .accepted

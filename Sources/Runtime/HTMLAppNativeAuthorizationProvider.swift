@@ -42,7 +42,7 @@ public final class HTMLAppSystemAuthorizationProvider: HTMLAppNativeAuthorizatio
                 }
             }
             return .notDetermined
-        case .clipboard, .fileExport, .fileImport, .notification, .share:
+        case .clipboard, .fileExport, .fileImport, .homeScreen, .notification, .share:
             // Notification status is asynchronous. The native handler performs
             // the final system-layer check just before the operation.
             return .granted

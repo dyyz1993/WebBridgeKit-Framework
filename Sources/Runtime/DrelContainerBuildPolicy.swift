@@ -14,11 +14,23 @@ public enum WebBridgeHostCapabilityPolicy {
     /// outside this list is rejected before a native handler can run.
     public static var nativeActionAllowlist: Set<String>?
 
+    /// Host-owned resolution for the current registered PWA. The SDK uses it
+    /// only for the action declaration model; it cannot create home entries.
+    public static var homeScreenContextProvider: (@Sendable (_ documentURL: URL, _ origin: String) -> HTMLAppHomeScreenTarget?)?
+
+    /// Host-owned home-screen activation. The default Bridge handler uses this
+    /// so a host can install the behavior without subclassing the handler.
+    public static var homeScreenPresenter: HTMLAppHomeScreenPresenter?
+
     public static var nativeBridgeEnabled: Bool {
         if let override = containerOnlyOverride {
             return !override
         }
         return true
+    }
+
+    static func homeScreenContext(documentURL: URL, origin: String) -> HTMLAppHomeScreenTarget? {
+        homeScreenContextProvider?(documentURL, origin)
     }
 }
 

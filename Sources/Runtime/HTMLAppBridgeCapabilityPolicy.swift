@@ -21,6 +21,9 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case "vibrate": return .vibrate
         case "share": return .share
         case "fullscreen": return .fullscreen
+        case "clipboard": return .clipboard
+        case "getLocation": return .location
+        case "addToHomeScreen": return .addToHomeScreen
         default: return nil
         }
     }
@@ -32,6 +35,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case "camera", "videoStream": return .camera
         case "clipboard": return .clipboard
         case "contacts": return .contacts
+        case "addToHomeScreen": return .homeScreen
         // gesture/layout/screen：纯容器交互，不涉及用户隐私，免授权
         case "gesture", "layout", "screen": return nil
         case "file": return .fileImport
@@ -72,6 +76,18 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case .haptic, .vibrate: return .displayStatus
         case .share: return .share
         case .fullscreen: return .displayStatus
+        case .clipboard: return .clipboard
+        case .location: return .location
+        case .addToHomeScreen: return .homeScreen
+        }
+    }
+
+    /// Grant-based capabilities require explicit reusable consent so a signed
+    /// declaration cannot become blanket access to user data.
+    public static func isGrantBasedAction(_ action: HTMLAppControlledAction) -> Bool {
+        switch action {
+        case .clipboard, .location: return true
+        case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen: return false
         }
     }
 
