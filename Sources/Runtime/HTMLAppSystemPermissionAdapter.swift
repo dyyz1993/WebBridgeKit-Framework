@@ -277,6 +277,11 @@ private final class LocationPermissionDelegate: NSObject, CLLocationManagerDeleg
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        // Requesting authorization fires this delegate once immediately with
+        // the cached `.notDetermined` state. That is not a system answer:
+        // completing now would fail the request before the user sees the
+        // iOS prompt. Wait for the actual post-prompt decision.
+        guard manager.authorizationStatus != .notDetermined else { return }
         onChange(manager.authorizationStatus)
     }
 }

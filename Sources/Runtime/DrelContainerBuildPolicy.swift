@@ -22,6 +22,12 @@ public enum WebBridgeHostCapabilityPolicy {
     /// so a host can install the behavior without subclassing the handler.
     public static var homeScreenPresenter: HTMLAppHomeScreenPresenter?
 
+    /// Host-owned guide for adding the current app to the iPhone Home Screen.
+    /// Triggered by the `addToHomeScreen` Bridge action with
+    /// `placement: "phoneHomeScreen"`; the SDK never owns this UI. Called on
+    /// the main thread.
+    public static var phoneHomeScreenGuidePresenter: ((HTMLAppHomeScreenTarget) -> Void)?
+
     public static var nativeBridgeEnabled: Bool {
         if let override = containerOnlyOverride {
             return !override

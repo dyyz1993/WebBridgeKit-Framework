@@ -85,6 +85,27 @@ public final class WebAddToHomeScreenHandler: BaseWebNativeHandler {
                 return
             }
 
+            // placement=phoneHomeScreen 请求的是 iPhone 主屏幕添加引导（弹窗），
+            // 不落 Drel 首页激活账本；由宿主提供的引导 UI 承接。
+            if (params["placement"] as? String) == "phoneHomeScreen" {
+                guard let guidePresenter = WebBridgeHostCapabilityPolicy.phoneHomeScreenGuidePresenter else {
+                    self.reject(error: "宿主未提供主屏幕添加引导", completion: completion)
+                    return
+                }
+                guidePresenter(context)
+                self.resolve(
+                    [
+                        "action": "addToHomeScreen",
+                        "placement": "phoneHomeScreen",
+                        "appId": context.manifest.appID,
+                        "name": context.manifest.name,
+                        "result": "guidePresented"
+                    ],
+                    completion: completion
+                )
+                return
+            }
+
             Task { @MainActor in
             do {
                     let result = try await self.presenter(context)

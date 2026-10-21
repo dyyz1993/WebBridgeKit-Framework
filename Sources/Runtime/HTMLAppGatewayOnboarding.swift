@@ -195,11 +195,16 @@ public final class HTMLAppGatewayOnboardingService {
         let policy = try trustPolicy(for: report.gateway)
         let identityChanged = previousGateway.map { Self.identity(of: $0) != Self.identity(of: report.gateway) } ?? false
         let manifestsByAppID = Dictionary(uniqueKeysWithValues: report.manifests.map { ($0.appID, $0) })
+        // 同一网关刷新时只清点报告管理的应用；不在报告里的应用（如宿主
+        // 本地注册的开发 fixture）授权原样保留——它们的 manifest 若已不在
+        // trustRegistry，授权本来就无从使用，而清掉会把用户刚在权限面板
+        // 做出的「始终允许」决定悄悄抹掉（2026-10-21 权限中心验收实测）。
+        // 换网关（identityChanged）仍然全清，不携带任何旧信任。
         let replacementGrants = identityChanged
             ? []
             : previousGrants.filter { grant in
-                guard let manifest = manifestsByAppID[grant.appID],
-                      manifest.declares(grant.capability) else { return false }
+                guard let manifest = manifestsByAppID[grant.appID] else { return true }
+                guard manifest.declares(grant.capability) else { return false }
                 return manifest.allowedOrigins
                     .compactMap(HTMLAppOrigin.canonicalDeclaredOrigin)
                     .contains(grant.origin)

@@ -20,6 +20,7 @@ public class WebLocationHandler: BaseWebNativeHandler {
     /// Location provider protocol for dependency injection (testable)
     internal protocol LocationProviding: AnyObject {
         var authorizationStatus: CLAuthorizationStatus { get }
+        var lastLocation: CLLocation? { get }
         var locationServicesEnabled: Bool { get }
         func requestWhenInUseAuthorization()
         func requestLocation()
@@ -30,6 +31,7 @@ public class WebLocationHandler: BaseWebNativeHandler {
     internal final class LocationManagerProvider: LocationProviding {
         private let manager = CLLocationManager()
         var authorizationStatus: CLAuthorizationStatus { manager.authorizationStatus }
+        var lastLocation: CLLocation? { manager.location }
         var locationServicesEnabled: Bool { CLLocationManager.locationServicesEnabled() }
         func requestWhenInUseAuthorization() { manager.requestWhenInUseAuthorization() }
         func requestLocation() { manager.requestLocation() }
@@ -68,6 +70,16 @@ public class WebLocationHandler: BaseWebNativeHandler {
             }
 
         case .authorizedWhenInUse, .authorizedAlways:
+            // `requestLocation()` waits for the GPS fix, which can take
+            // several seconds on a cold start. If CoreLocation already has
+            // a recent cached fix (from this or another app), answer with it
+            // immediately and still refresh in the background for the next
+            // call.
+            if let cached = locationProvider.lastLocation,
+               Date().timeIntervalSince(cached.timestamp) < 15 {
+                resolve(cached)
+                return
+            }
             getCurrentLocation()
 
         default:
@@ -110,6 +122,18 @@ public class WebLocationHandler: BaseWebNativeHandler {
         locationProvider.setDelegate(self)
         locationProvider.requestLocation()
     }
+
+    private func resolve(_ location: CLLocation) {
+        let result: [String: Any] = [
+            "latitude": location.coordinate.latitude,
+            "longitude": location.coordinate.longitude,
+            "accuracy": location.horizontalAccuracy
+        ]
+        if let completion = completionCallback {
+            resolve(result, completion: completion)
+            completionCallback = nil
+        }
+    }
 }
 
 // MARK: - CLLocationManagerDelegate
@@ -144,25 +168,8 @@ extension WebLocationHandler: CLLocationManagerDelegate {
      * 成功获取位置后的回调
      */
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else {
-            completionCallback?([
-                "success": false,
-                "error": "Failed to get location"
-            ])
-            completionCallback = nil
-            return
-        }
-
-        let result: [String: Any] = [
-            "latitude": location.coordinate.latitude,
-            "longitude": location.coordinate.longitude,
-            "accuracy": location.horizontalAccuracy
-        ]
-
-        if let completion = completionCallback {
-            resolve(result, completion: completion)
-            completionCallback = nil
-        }
+        guard let location = locations.last else { return }
+        resolve(location)
     }
 
     /**
