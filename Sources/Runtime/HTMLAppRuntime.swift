@@ -473,14 +473,30 @@ public final class HTMLAppPermissionLedger {
     }
 
     public func revoke(subject: HTMLAppPermissionSubject, capability: HTMLAppCapability, actionIdentity: String? = nil) {
-        let key = subject.storageKey(capability: capability, actionIdentity: actionIdentity)
         lock.lock()
-        let removedSession = sessionGrants.removeValue(forKey: key)
-        let removedPersistent = persistentGrants.removeValue(forKey: key)
-        persistLocked()
+        var removedGrants: [HTMLAppPermissionGrant] = []
+        if let actionIdentity {
+            let key = subject.storageKey(capability: capability, actionIdentity: actionIdentity)
+            removedGrants.append(
+                contentsOf: [sessionGrants.removeValue(forKey: key), persistentGrants.removeValue(forKey: key)].compactMap { $0 }
+            )
+        } else {
+            // 无 actionIdentity 的撤销语义 = 撤销该 (subject, capability) 的
+            // 全部授权变体。v2 声明授权的 key 带 "|action:" 后缀，只删裸 key
+            // 会让权限中心的撤销对这类授权静默无效（2026-10-21 实测）。
+            let plainKey = subject.storageKey(capability: capability)
+            let actionPrefix = plainKey + "|action:"
+            for key in Array(sessionGrants.keys) where key == plainKey || key.hasPrefix(actionPrefix) {
+                if let grant = sessionGrants.removeValue(forKey: key) { removedGrants.append(grant) }
+            }
+            for key in Array(persistentGrants.keys) where key == plainKey || key.hasPrefix(actionPrefix) {
+                if let grant = persistentGrants.removeValue(forKey: key) { removedGrants.append(grant) }
+            }
+        }
+        if !removedGrants.isEmpty { persistLocked() }
         lock.unlock()
 
-        guard removedSession != nil || removedPersistent != nil else { return }
+        guard !removedGrants.isEmpty else { return }
         postRevocation(HTMLAppPermissionRevocation(
             appID: subject.appID,
             origin: subject.origin,
@@ -706,19 +722,24 @@ public final class HTMLAppCapabilityGateway {
         }
 
         if let grant = permissionLedger.grant(for: subject, capability: request.capability, actionIdentity: request.purposeId) {
-            guard declaration == nil || grant.scope == declaration?.scope else {
-                permissionLedger.revoke(
-                    subject: subject,
-                    capability: request.capability,
-                    actionIdentity: request.purposeId
-                )
-                return result(
-                    for: request,
-                    status: .denied,
-                    failureReason: .undeclaredCapability
-                )
+            // 只有持久的「始终允许」能免询问放行。「仅这一次」是一次性事实，
+            // 下次调用必须重新弹面板（2026-10-21 用户验收的硬性要求），
+            // 不能沿用旧账本记录直接放行或直接拒绝。
+            if grant.scope == .always {
+                guard declaration == nil || grant.scope == declaration?.scope else {
+                    permissionLedger.revoke(
+                        subject: subject,
+                        capability: request.capability,
+                        actionIdentity: request.purposeId
+                    )
+                    return result(
+                        for: request,
+                        status: .denied,
+                        failureReason: .undeclaredCapability
+                    )
+                }
+                return result(for: request, status: .granted, scope: grant.scope)
             }
-            return result(for: request, status: .granted, scope: grant.scope)
         }
 
         // Grant-based V2 actions must still match a signed declaration before
@@ -802,10 +823,13 @@ public final class HTMLAppCapabilityGateway {
             guard let self else { return }
             switch nativeStatus {
             case .granted:
+                // 用户在面板里的选择是授权范围的最终事实；签名声明里的
+                // scope 只是申请时的默认展示，不能覆盖用户选的「允许一次」
+                // （否则一次授权会被悄悄升级成持久授权）。
                 let grant = self.permissionLedger.grant(
                     subject: subject,
                     capability: request.capability,
-                    scope: currentDeclaration?.scope ?? (approvedScope == .once ? .once : .always),
+                    scope: approvedScope,
                     actionIdentity: currentDeclaration?.purposeId
                 )
                 completion(self.result(for: request, status: .granted, scope: grant.scope))

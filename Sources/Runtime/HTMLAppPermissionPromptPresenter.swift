@@ -56,6 +56,12 @@ public extension HTMLAppPermissionConsentPresenting {
 public final class HTMLAppPermissionPromptPresenter: HTMLAppPermissionConsentPresenting {
     public static let shared = HTMLAppPermissionPromptPresenter()
 
+    /// Host hook: open the per-app permission management page for `appID`.
+    /// Backs the consent panel's quick entry under the scope buttons
+    /// (2026-10-21 用户验收：始终允许下方要有直达权限中心的入口).
+    /// Called on the main thread after the panel has dismissed.
+    public static var permissionCenterOpener: ((_ appID: String) -> Void)?
+
     private struct RequestIdentity: Equatable {
         let appID: String
         let origin: String
@@ -164,6 +170,7 @@ public final class HTMLAppPermissionPromptPresenter: HTMLAppPermissionConsentPre
         }
 
         let prompt = HTMLAppPermissionPromptViewController(
+            appID: activeRequest.identity.appID,
             appName: activeRequest.appName,
             origin: activeRequest.identity.origin,
             capability: activeRequest.identity.capability,
@@ -213,6 +220,7 @@ public final class HTMLAppPermissionPromptPresenter: HTMLAppPermissionConsentPre
 }
 
 private final class HTMLAppPermissionPromptViewController: UIViewController {
+    private let appID: String
     private let appName: String
     private let origin: String
     private let capability: HTMLAppCapability
@@ -233,12 +241,14 @@ private final class HTMLAppPermissionPromptViewController: UIViewController {
     private var hasResolved = false
 
     init(
+        appID: String,
         appName: String,
         origin: String,
         capability: HTMLAppCapability,
         reason: String,
         completion: @escaping (HTMLAppPermissionScope?) -> Void
     ) {
+        self.appID = appID
         self.appName = appName
         self.origin = origin
         self.capability = capability
@@ -381,6 +391,7 @@ private final class HTMLAppPermissionPromptViewController: UIViewController {
         contentStack.addArrangedSubview(makeReasonCard())
         contentStack.addArrangedSubview(makeScopeStack())
         contentStack.addArrangedSubview(makeSystemNotice())
+        contentStack.addArrangedSubview(makePermissionCenterEntry())
 
         let sourceLabel = UILabel()
         sourceLabel.font = ThemeTokens.Typography.monospaceSmall
@@ -489,29 +500,52 @@ private final class HTMLAppPermissionPromptViewController: UIViewController {
         let stack = UIStackView()
         stack.axis = .vertical
         stack.spacing = ThemeTokens.Spacing.sm
+        // showSettingsGuidance() 依赖该标识隐藏选项区；漏设会让系统拒绝
+        // 引导态仍显示三档按钮。
+        stack.accessibilityIdentifier = "pwa.permission.scopes"
 
-        // 产品决策 2026-08-22：简化为「允许 / 拒绝」两选。
-        // 允许 = 始终允许（可随时在设置撤销），拒绝 = 本次拒绝（下次再调再弹）。
-        // 去掉了「仅这一次」「本次使用期间」——用户反馈选项过多且语义混淆。
-        let allow = PermissionScopeButton(
-            title: "允许",
-            subtitle: "可随时在设置中撤销授权",
-            recommended: true
+        // 2026-10-21 用户决策：回到三档，且不默认推荐任何一项。拒绝复用底部
+        // 「取消」语义；「允许一次」在前（蓝色调）、「始终允许」在后（绿色调），
+        // 两个选项颜色区分但不预选中任何一个。
+        let allowOnce = PermissionScopeButton(
+            title: "允许一次",
+            subtitle: "仅本次有效，下次使用时再次询问",
+            tone: .primary
         )
-        allow.accessibilityIdentifier = "pwa.permission.scope.allow"
+        allowOnce.accessibilityIdentifier = "pwa.permission.scope.once"
+        allowOnce.addAction(UIAction { [weak self] _ in self?.resolve(.once) }, for: .touchUpInside)
+
+        let allow = PermissionScopeButton(
+            title: "始终允许",
+            subtitle: "授权后不再重复询问，可在权限中心撤销",
+            tone: .success
+        )
+        allow.accessibilityIdentifier = "pwa.permission.scope.always"
         allow.addAction(UIAction { [weak self] _ in self?.resolve(.always) }, for: .touchUpInside)
 
-        let deny = PermissionScopeButton(
-            title: "拒绝",
-            subtitle: "本次拒绝，下次使用时再次询问",
-            recommended: false,
-            style: .destructive
-        )
-        deny.accessibilityIdentifier = "pwa.permission.scope.deny"
-        deny.addAction(UIAction { [weak self] _ in self?.resolve(nil) }, for: .touchUpInside)
-
-        [allow, deny].forEach { stack.addArrangedSubview($0) }
+        [allowOnce, allow].forEach { stack.addArrangedSubview($0) }
         return stack
+    }
+
+    /// 始终允许下方的快捷入口：跳转该应用的权限与能力页（用户验收
+    /// 2026-10-21）。跳转 = 本次不授权（等同取消），下次调用重新询问。
+    private func makePermissionCenterEntry() -> UIView {
+        let button = UIButton(type: .system)
+        button.setTitle("查看与管理授权 · 权限与原生能力 →", for: .normal)
+        button.setTitleColor(ThemeTokens.Color.primary, for: .normal)
+        button.titleLabel?.font = ThemeTokens.Typography.caption1
+        button.contentHorizontalAlignment = .leading
+        button.accessibilityIdentifier = "pwa.permission.openCenter"
+        button.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.cancel()
+            guard HTMLAppPermissionPromptPresenter.permissionCenterOpener != nil else { return }
+            // 等面板退场动画结束再推页，避免 topViewController 命中转场中的 VC
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                HTMLAppPermissionPromptPresenter.permissionCenterOpener?(self.appID)
+            }
+        }, for: .touchUpInside)
+        return button
     }
 
     private func makeSystemNotice() -> UIView {
@@ -635,26 +669,43 @@ private final class HTMLAppPermissionPromptViewController: UIViewController {
 }
 
 private final class PermissionScopeButton: UIButton {
-    enum ButtonStyle { case normal, destructive }
+    /// 语义色调：两个授权选项必须可一眼区分（primary=蓝 允许一次，
+    /// success=绿 始终允许），且没有哪个看起来是预选中的默认项。
+    enum Tone {
+        case neutral, primary, success, destructive
+    }
 
-    init(title: String, subtitle: String, recommended: Bool, style: ButtonStyle = .normal) {
+    init(title: String, subtitle: String, tone: Tone = .neutral) {
         super.init(frame: .zero)
 
-        let isDestructive = style == .destructive
-        // destructive 与 recommended 同构的 tint 风格：浅色底 + 深色文字。
-        // 之前误用 error 实底 + error 文字（红底红字不可读，2026-08-23 用户反馈）。
-        backgroundColor = isDestructive
-            ? ThemeTokens.Color.errorSoft
-            : (recommended ? ThemeTokens.Color.primarySoft : ThemeTokens.Color.surface)
+        let accent: UIColor
+        let softBackground: UIColor
+        switch tone {
+        case .neutral:
+            accent = ThemeTokens.Color.text
+            softBackground = ThemeTokens.Color.surface
+        case .primary:
+            accent = ThemeTokens.Color.primary
+            softBackground = ThemeTokens.Color.primarySoft
+        case .success:
+            accent = ThemeTokens.Color.success
+            softBackground = ThemeTokens.Color.successSoft
+        case .destructive:
+            accent = ThemeTokens.Color.error
+            softBackground = ThemeTokens.Color.errorSoft
+        }
+        // 浅色底 + 对应色调描边/文字：可读性优先（2026-08-23 教训：
+        // 实底+同色文字不可读），同时让两种授权语义在颜色上明确分野。
+        backgroundColor = softBackground
         layer.cornerRadius = ThemeTokens.CornerRadius.row
         layer.borderWidth = 1
-        layer.borderColor = (isDestructive ? ThemeTokens.Color.error : (recommended ? ThemeTokens.Color.primary : ThemeTokens.Color.border)).cgColor
+        layer.borderColor = (tone == .neutral ? ThemeTokens.Color.border : accent).cgColor
         accessibilityLabel = title
         accessibilityHint = subtitle
 
         let titleLabel = UILabel()
         titleLabel.font = ThemeTokens.Typography.rowTitle
-        titleLabel.textColor = isDestructive ? ThemeTokens.Color.error : ThemeTokens.Color.text
+        titleLabel.textColor = tone == .neutral ? ThemeTokens.Color.text : accent
         titleLabel.text = title
 
         let subtitleLabel = UILabel()
@@ -668,9 +719,7 @@ private final class PermissionScopeButton: UIButton {
         labels.isUserInteractionEnabled = false
 
         let iconView = UIImageView(image: LucideIcon.chevronRight.templateImage(pointSize: 16, weight: .semibold))
-        iconView.tintColor = isDestructive
-            ? ThemeTokens.Color.error
-            : (recommended ? ThemeTokens.Color.primary : ThemeTokens.Color.textTertiary)
+        iconView.tintColor = tone == .neutral ? ThemeTokens.Color.textTertiary : accent
 
         addSubview(labels)
         addSubview(iconView)
