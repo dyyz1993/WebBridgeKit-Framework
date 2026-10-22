@@ -548,10 +548,12 @@ public final class HTMLAppPermissionLedger {
         func keep(_ entry: (key: String, value: HTMLAppPermissionGrant)) -> Bool {
             guard entry.key.hasPrefix(prefix) else { return true }
             if let actionIdentity = entry.value.actionIdentity {
+                // 授权的作用域由用户在面板上选择，不是 manifest 声明的默认值。
+                // 用户选「始终允许」而声明是 .always/.once 时，重新注册 manifest
+                // 不得把这条持久授权判为过期清掉（2026-10-22：重启后授权丢失）。
                 return manifest.capabilitiesV2.contains {
                     $0.purposeId == actionIdentity && $0.origins.contains(origin) &&
-                    HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == entry.value.capability &&
-                    $0.scope == entry.value.scope
+                    HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == entry.value.capability
                 }
             }
             return manifest.declares(entry.value.capability)
