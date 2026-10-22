@@ -181,4 +181,93 @@ final class PermissionGrantPersistenceTests: XCTestCase {
             "「允许一次」后再次调用必须重新弹面板"
         )
     }
+
+    /// 真机冷启动的核心漏洞复现（2026-10-22 用户第三次实测）：
+    /// 纯 V2 应用（能力只在 capabilitiesV2 声明，不在 V1 capabilities 数组）
+    /// 被用户授予始终允许后，杀掉 App 重启触发展示层的网关刷新
+    ///（HTMLAppGatewayOnboardingService.activate），其内部原先仅调用
+    /// `manifest.declares(grant.capability)` 过滤账本 —— 该方法只查 V1 数组，
+    /// 直接把该应用的持久授权判定为「已不再声明」而抹掉！
+    func testGatewayActivationKeepsV2OnlyGrants() throws {
+        let storage = MemoryStorage()
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let metadataStore = HTMLAppPresentationMetadataStore(storage: storage)
+        let gateway = HTMLAppGatewayConfiguration(
+            id: "gw-test",
+            name: "Test Gateway",
+            baseURL: "https://api.drel.app",
+            healthPath: "/health",
+            manifestPath: "/manifest"
+        )
+        let gatewayRegistry = HTMLAppGatewayRegistry(storage: storage, officialGateway: gateway)
+
+        let service = HTMLAppGatewayOnboardingService(
+            gatewayRegistry: gatewayRegistry,
+            trustRegistry: registry,
+            permissionLedger: ledger,
+            presentationMetadataStore: metadataStore,
+            allowsDevelopmentMode: true
+        )
+
+        // 一个纯 V2 应用：capabilities 数组为空，定位只在 capabilitiesV2
+        let manifest = HTMLAppManifest(
+            appID: "dev.drel.pure-v2",
+            name: "Pure V2 App",
+            startURL: "https://drel.app/test/actions/v1/index.html",
+            allowedOrigins: ["https://drel.app"],
+            capabilities: [], // V1 为空！这正是 action-demo 的真实形态
+            capabilitiesV2: [
+                HTMLAppActionDeclaration(
+                    action: .location,
+                    origins: ["https://drel.app"],
+                    purposeId: "pure-v2-location",
+                    purpose: "定位",
+                    scope: .always
+                ),
+                HTMLAppActionDeclaration(
+                    action: .clipboard,
+                    origins: ["https://drel.app"],
+                    purposeId: "pure-v2-clipboard",
+                    purpose: "剪贴板",
+                    scope: .always
+                )
+            ],
+            routes: ["/"],
+            cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "1", persistent: false, restoresLastState: false)
+        )
+
+        let report = HTMLAppGatewayValidationReport(
+            gateway: gateway,
+            manifests: [manifest],
+            presentationMetadata: [:],
+            healthStatusCode: 200
+        )
+
+        // 首次激活网关
+        try service.activate(report)
+
+        // 用户在两个能力上都选了「始终允许」
+        let subject = HTMLAppPermissionSubject(
+            gatewayIdentity: "\(gateway.id)#\(gateway.publicKeyID ?? "")",
+            appID: manifest.appID,
+            origin: "https://drel.app"
+        )
+        ledger.grant(subject: subject, capability: .location, scope: .always, actionIdentity: "pure-v2-location")
+        ledger.grant(subject: subject, capability: .clipboard, scope: .always, actionIdentity: "pure-v2-clipboard")
+
+        XCTAssertEqual(ledger.grants(for: manifest.appID).count, 2, "授权后账本里应有 2 条记录")
+
+        // 模拟冷启动：首页再次触发网关刷新（完全相同的网关与清单）
+        try service.activate(report)
+
+        // 关键断言：纯 V2 应用的授权不得被抹掉
+        let remaining = ledger.grants(for: manifest.appID)
+        XCTAssertEqual(
+            remaining.count, 2,
+            "冷启动网关刷新后，纯 V2 应用的「始终允许」授权必须完整保留（此前因 declares() 只查 V1 导致全部被清）"
+        )
+        XCTAssertTrue(remaining.contains { $0.capability == .location && $0.scope == .always })
+        XCTAssertTrue(remaining.contains { $0.capability == .clipboard && $0.scope == .always })
+    }
 }

@@ -556,7 +556,10 @@ public final class HTMLAppPermissionLedger {
                     HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == entry.value.capability
                 }
             }
-            return manifest.declares(entry.value.capability)
+            let declaresV2 = manifest.capabilitiesV2.contains {
+                HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == entry.value.capability
+            }
+            return manifest.declares(entry.value.capability) || declaresV2
         }
         let revoked = (Array(sessionGrants.values) + Array(persistentGrants.values)).filter {
             $0.subject.gatewayIdentity == gatewayIdentity &&
