@@ -727,19 +727,14 @@ public final class HTMLAppCapabilityGateway {
             // 只有持久的「始终允许」能免询问放行。「仅这一次」是一次性事实，
             // 下次调用必须重新弹面板（2026-10-21 用户验收的硬性要求），
             // 不能沿用旧账本记录直接放行或直接拒绝。
+            //
+            // 注意：授权范围是用户在面板上选的，不是签名声明的默认值。
+            // 此前这里要求 grant.scope == declaration?.scope，声明为
+            // .once/.appSession 而用户选了「始终允许」时，会把用户刚授予的
+            // 持久授权判定为不匹配并主动撤销 —— 真机上表现为「始终允许」
+            // 立刻失效、下次还弹面板（2026-10-22 用户实测）。声明只用于
+            // 校验能力是否被声明，不再参与 scope 比对。
             if grant.scope == .always {
-                guard declaration == nil || grant.scope == declaration?.scope else {
-                    permissionLedger.revoke(
-                        subject: subject,
-                        capability: request.capability,
-                        actionIdentity: request.purposeId
-                    )
-                    return result(
-                        for: request,
-                        status: .denied,
-                        failureReason: .undeclaredCapability
-                    )
-                }
                 return result(for: request, status: .granted, scope: grant.scope)
             }
         }
