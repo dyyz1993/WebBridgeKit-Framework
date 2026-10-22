@@ -204,7 +204,17 @@ public final class HTMLAppGatewayOnboardingService {
             ? []
             : previousGrants.filter { grant in
                 guard let manifest = manifestsByAppID[grant.appID] else { return true }
-                guard manifest.declares(grant.capability) else { return false }
+                // 能力必须由当前 manifest 声明（v1 capabilities 数组或 v2
+                // capabilitiesV2 动作声明）。此前只调用了 manifest.declares，
+                // 其内部仅检查 v1 数组；而剪贴板、定位等受控动作只在 v2 声明，
+                // 导致每次冷启动网关校验完成后，网关报告里的应用的持久授权
+                // 被判定为「未声明」直接被 replaceAll 抹掉 —— 真机上表现为
+                // 「授权后在权限页能看到，杀掉 App 重开就没了」（2026-10-22 实测）。
+                let declaresV1 = manifest.declares(grant.capability)
+                let declaresV2 = manifest.capabilitiesV2.contains {
+                    HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == grant.capability
+                }
+                guard declaresV1 || declaresV2 else { return false }
                 return manifest.allowedOrigins
                     .compactMap(HTMLAppOrigin.canonicalDeclaredOrigin)
                     .contains(grant.origin)
