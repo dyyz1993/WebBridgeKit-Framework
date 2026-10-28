@@ -402,39 +402,47 @@ extension WebBrowserViewController: WKNavigationDelegate {
         <html>
         <head>
             <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
             <title>WebBridge 资源加载失败</title>
             <style>
-                body { font-family: -apple-system, sans-serif; background-color: #f8f9fa; margin: 0; padding: 20px; color: #2d3748; line-height: 1.5; }
-                .container { max-width: 600px; margin: 40px auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-top: 6px solid #e53e3e; }
-                h1 { color: #c53030; font-size: 22px; margin-top: 0; display: flex; align-items: center; }
-                .icon { font-size: 28px; margin-right: 12px; }
-                .info-box { background: #fff5f5; border: 1px solid #feb2b2; padding: 15px; border-radius: 8px; margin: 20px 0; word-break: break-all; }
-                .label { font-weight: bold; color: #742a2a; display: block; margin-bottom: 5px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
-                code { background: #edf2f7; padding: 3px 6px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; color: #1a202c; }
-                .footer { margin-top: 30px; font-size: 14px; color: #4a5568; border-top: 1px solid #edf2f7; padding-top: 20px; }
-                ul { padding-left: 20px; margin-top: 10px; }
-                li { margin-bottom: 8px; }
-                .btn { display: inline-block; background: #4a5568; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; margin-top: 15px; font-size: 14px; }
-                .btn:hover { background: #2d3748; }
+                :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+                body { margin: 0; min-height: 100vh; background: linear-gradient(170deg,#f5f7fb,#eef1f8); color: #172033; }
+                @media (prefers-color-scheme: dark) { body { background: linear-gradient(170deg,#101623,#181f2e); color: #f2f5fa; } }
+                main { max-width: 620px; margin: 0 auto; padding: max(32px, env(safe-area-inset-top)) 20px 48px; }
+                .card { background: rgba(255,255,255,.84); border: 1px solid rgba(23,32,51,.08); border-radius: 22px; padding: 24px; box-shadow: 0 18px 50px rgba(23,32,51,.08); }
+                @media (prefers-color-scheme: dark) { .card { background: rgba(24,31,46,.92); border-color: rgba(255,255,255,.09); } }
+                .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; color: #b4232c; }
+                h1 { margin: 8px 0 6px; font-size: 26px; letter-spacing: -.02em; }
+                p { margin: 6px 0 18px; line-height: 1.55; color: #4b5565; }
+                @media (prefers-color-scheme: dark) { p { color: #a9b2c1; } }
+                .box { background: rgba(180,35,44,.06); border: 1px solid rgba(180,35,44,.18); border-radius: 14px; padding: 13px 15px; margin: 12px 0; word-break: break-all; }
+                .label { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #8a2730; display: block; margin-bottom: 5px; }
+                code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; color: inherit; }
+                .tips { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid rgba(23,32,51,.1); font-size: 14px; color: #4b5565; }
+                @media (prefers-color-scheme: dark) { .tips { border-top-color: rgba(255,255,255,.1); color: #a9b2c1; } }
+                .tips ul { padding-left: 20px; margin: 8px 0 0; }
+                .tips li { margin-bottom: 7px; }
+                .btn { display: inline-block; margin-top: 18px; padding: 11px 20px; border-radius: 14px; background: #4d50d8; color: white; text-decoration: none; font-weight: 700; font-size: 14px; }
             </style>
         </head>
         <body>
-            <div class="container">
-                <h1><span class="icon">[BLOCK]</span>WebBridge 资源加载失败</h1>
-                <p>在处理缓存加载请求时遇到了错误，无法加载目标页面。</p>
+            <main>
+              <section class="card">
+                <div class="eyebrow">加载失败</div>
+                <h1>无法加载这个页面</h1>
+                <p>在处理缓存加载请求时遇到了错误，目标页面没有载入。</p>
 
-                <div class="info-box">
+                <div class="box">
                     <span class="label">请求地址 (Request URL):</span>
                     <code>\(urlString)</code>
                 </div>
 
-                <div class="info-box">
+                <div class="box">
                     <span class="label">错误原因 (Error):</span>
                     <code>\(errorMessage)</code>
                 </div>
 
-                <div class="footer">
+                <div class="tips">
                     <span class="label">排查建议:</span>
                     <ul>
                         <li>检查网络连接是否正常。</li>
@@ -444,7 +452,8 @@ extension WebBrowserViewController: WKNavigationDelegate {
                     </ul>
                     <a href="javascript:location.reload()" class="btn">重试加载 (Reload)</a>
                 </div>
-            </div>
+              </section>
+            </main>
         </body>
         </html>
         """
