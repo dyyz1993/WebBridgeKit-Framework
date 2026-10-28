@@ -54,7 +54,12 @@ extension ManifestStore {
                         manifest.accessCount = accessCount
                     }
 
-                    let cacheTimestamp = manifest.lastUpdated ?? Date()
+                    // A manifest without a stored timestamp has no age, so it
+                    // cannot be judged by the expiry window. Falling back to
+                    // `Date()` made such entries look infinitely fresh and
+                    // they were never evicted. Use the epoch instead: an
+                    // undated entry is older than the window, not newer.
+                    let cacheTimestamp = manifest.lastUpdated ?? Date(timeIntervalSince1970: 0)
 
                     //  Security: Handle new contentHash field for integrity verification
                     let contentHash = value["contentHash"] as? String ?? UUID().uuidString
