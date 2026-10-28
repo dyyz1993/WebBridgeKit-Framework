@@ -98,7 +98,8 @@ public class ManifestStore: ManifestCacheManaging {
 
     public func getManifest(for key: String) -> Manifest? {
         return serialQueue.sync {
-            return manifestCache[key]?.manifest
+            guard let entry = manifestCache[key], !entry.isExpired else { return nil }
+            return entry.manifest
         }
     }
 
@@ -172,6 +173,74 @@ public class ManifestStore: ManifestCacheManaging {
         }
     }
 
+    // MARK: - Seeded Development Fixture Cleanup
+
+    /// App IDs written by the Drel development seeder. They were never part
+    /// of a shipping build, but the seeded manifest cache is a plain plist
+    /// under Caches, so it survives an app upgrade. A user who once ran a
+    /// development build kept seeing those fake apps in the cache list.
+    static let seededFixtureAppIDs: Set<String> = [
+        "weather-app",
+        "markdown-notes",
+        "shop-mall-app",
+        "game-tetris",
+        "news-daily",
+        "swift-docs",
+        "admin-panel",
+        "analytics-app",
+    ]
+
+    /// True when a manifest was written by the development seeder.
+    ///
+    /// Two independent signals are used so a real user app is never
+    /// removed: the seeded app ID, or a resource URL that points at the
+    /// development fixture host / the placeholder favicon.
+    static func isSeededFixture(_ manifest: Manifest) -> Bool {
+        if let appid = manifest.appid, seededFixtureAppIDs.contains(appid) {
+            return true
+        }
+        for url in manifest.resources.values {
+            let lower = url.lowercased()
+            if lower.contains("/test_resources/") || lower.hasSuffix("/favicon.ico") {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Removes development-seeded manifests from the cache.
+    ///
+    /// - Returns: The keys that were removed.
+    @discardableResult
+    public func purgeSeededFixtures() -> [String] {
+        let removedKeys: [String] = serialQueue.sync {
+            let seededKeys = manifestCache.filter { Self.isSeededFixture($0.value.manifest) }.map(\.key)
+            for key in seededKeys {
+                manifestCache.removeValue(forKey: key)
+                htmlCache.removeValue(forKey: key)
+                currentManifests.removeValue(forKey: key)
+            }
+            return seededKeys
+        }
+
+        guard !removedKeys.isEmpty else { return [] }
+
+        // Saving has to happen outside the lock: scheduleAsyncSave reads the
+        // caches through serialQueue.sync, and re-entering a serial queue
+        // from inside its own sync block deadlocks.
+        scheduleAsyncSave()
+        // Also write synchronously: the async save is scheduled on a utility
+        // queue and the app may be backgrounded before it runs, which would
+        // leave the seeded entries on disk for the next launch.
+        saveToDiskSync()
+        Log.info("Purged \(removedKeys.count) seeded development fixtures", category: .manifest)
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .manifestCacheDidUpdate, object: nil)
+        }
+        return removedKeys
+    }
+
     // MARK: - Current Manifest
 
     public func getCurrentManifest(for key: String) -> Manifest? {
@@ -192,7 +261,10 @@ public class ManifestStore: ManifestCacheManaging {
     /// - Returns: 所有页面标识符（HTML 或 Manifest）
     public func getAllPageKeys() -> [String] {
         return serialQueue.sync {
-            return Array(manifestCache.keys)
+            // Expired entries must not be reported as cached pages. They used
+            // to be returned here even though `isExpired` existed, so a stale
+            // manifest stayed visible in the cache list forever.
+            return manifestCache.filter { !$0.value.isExpired }.map(\.key)
         }
     }
 
@@ -200,8 +272,18 @@ public class ManifestStore: ManifestCacheManaging {
     /// - Returns: 所有 manifest 对象数组
     public func getAllManifests() -> [Manifest] {
         return serialQueue.sync {
-            return manifestCache.values.map { $0.manifest }
+            return manifestCache.filter { !$0.value.isExpired }.map(\.value.manifest)
         }
+    }
+
+    /// Every cached manifest, including expired ones.
+    ///
+    /// `getAllPageKeys` and `getAllManifests` hide expired entries on purpose.
+    /// Callers that need to know whether the cache holds anything at all — the
+    /// development seeder uses this to avoid seeding twice — must not use the
+    /// filtered views, or an expired cache looks empty and gets re-seeded.
+    public var totalManifestCount: Int {
+        return serialQueue.sync { manifestCache.count }
     }
 
     // MARK: - Version Status
