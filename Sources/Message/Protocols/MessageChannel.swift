@@ -318,9 +318,21 @@ public struct MessageApprovalAction: Codable, Sendable, Equatable {
 
 public struct MessageApproval: Codable, Sendable, Equatable {
     public let actions: [MessageApprovalAction]
+    public let submit: MessageApprovalSubmit?
 
-    public init(actions: [MessageApprovalAction]) {
+    public init(actions: [MessageApprovalAction], submit: MessageApprovalSubmit? = nil) {
         self.actions = actions
+        self.submit = submit
+    }
+}
+
+public struct MessageApprovalSubmit: Codable, Sendable, Equatable {
+    public let url: String
+    public let ticket: String
+
+    public init(url: String, ticket: String) {
+        self.url = url
+        self.ticket = ticket
     }
 }
 

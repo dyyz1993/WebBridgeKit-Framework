@@ -120,7 +120,17 @@ public enum NotificationPayloadMapper {
                 resultState: MessageActionState(rawValue: action["resultState"] as? String ?? "")
             )
         }
-        return actions.isEmpty ? nil : MessageApproval(actions: actions)
+        let submit: MessageApprovalSubmit?
+        if let rawSubmit = object["submit"] as? [String: Any],
+           let url = rawSubmit["url"] as? String,
+           let ticket = rawSubmit["ticket"] as? String,
+           !url.isEmpty,
+           !ticket.isEmpty {
+            submit = MessageApprovalSubmit(url: url, ticket: ticket)
+        } else {
+            submit = nil
+        }
+        return actions.isEmpty ? nil : MessageApproval(actions: actions, submit: submit)
     }
 
     private static func notificationStringDictionary(_ userInfo: [AnyHashable: Any]) -> [String: String] {
