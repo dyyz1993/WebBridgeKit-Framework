@@ -242,6 +242,67 @@ final class MessagePayloadTests: XCTestCase {
         XCTAssertFalse(resolved.hasNativeApprovalActions)
     }
 
+    func testRealEdgeAPNsPayloadMapsToActionableNativeApproval() {
+        // Captured from the edge Worker's buildPlainAPNsPayload. This keeps
+        // the wire spelling (state + approval.actions) locked to the mapper.
+        let userInfo: [AnyHashable: Any] = [
+            "aps": [
+                "alert": ["title": "Approval", "body": "Release?"],
+                "mutable-content": 1,
+                "sound": "default",
+            ],
+            "messageId": "worker-message-1",
+            "title": "Approval",
+            "body": "Release?",
+            "schema": "webbridgekit.message.v1",
+            "type": "approval",
+            "id": "approval-1",
+            "requestId": "approval-1",
+            "revision": 1,
+            "state": "pending",
+            "actionState": "pending",
+            "contentType": "approval",
+            "presentation": "native",
+            "approval": [
+                "actions": [
+                    [
+                        "id": "approve",
+                        "title": "Approve",
+                        "style": "primary",
+                        "resultState": "approved",
+                    ],
+                    [
+                        "id": "reject",
+                        "title": "Reject",
+                        "style": "destructive",
+                        "resultState": "rejected",
+                    ],
+                ],
+            "responseMode": "thirdParty",
+            "submit": [
+                "url": "https://approve.xbrowser.dev/api/review",
+                "ticket": "ticket-123",
+            ],
+            ],
+        ]
+
+        let payload = NotificationPayloadMapper.makePayload(
+            identifier: "worker-message-1",
+            userInfo: userInfo
+        )
+
+        XCTAssertEqual(payload.id, "worker-message-1")
+        XCTAssertEqual(payload.actionState, .pending)
+        XCTAssertEqual(payload.contentType, .approval)
+        XCTAssertEqual(payload.presentation, .native)
+        XCTAssertEqual(payload.approval?.actions.map(\.id), ["approve", "reject"])
+        XCTAssertEqual(payload.approval?.submit, MessageApprovalSubmit(
+            url: "https://approve.xbrowser.dev/api/review",
+            ticket: "ticket-123"
+        ))
+        XCTAssertTrue(payload.hasNativeApprovalActions)
+    }
+
     func testTTLDeterminesExpirationWhenNoExplicitDateExists() {
         let createdAt = Date(timeIntervalSince1970: 1_000)
         let payload = MessagePayload(
