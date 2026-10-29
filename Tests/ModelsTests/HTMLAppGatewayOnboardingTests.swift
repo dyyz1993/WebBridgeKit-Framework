@@ -601,6 +601,80 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
         XCTAssertNil(permissionLedger.grant(for: makeSubject(), capability: .notification))
     }
 
+    func testManifestRefreshPrunesGrantsForRemovedActionPurpose() throws {
+        let storage = MemoryStorage()
+        let gateway = HTMLAppGatewayConfiguration(
+            id: "managed",
+            name: "Managed",
+            baseURL: "https://apps.example.com"
+        )
+        let gatewayRegistry = HTMLAppGatewayRegistry(storage: storage)
+        let trustRegistry = HTMLAppTrustRegistry(storage: storage)
+        let permissionLedger = HTMLAppPermissionLedger(storage: storage)
+        let subject = HTMLAppPermissionSubject(
+            gatewayIdentity: "managed#",
+            appID: "com.example.gateway-app",
+            origin: "https://apps.example.com"
+        )
+        permissionLedger.grant(
+            subject: subject,
+            capability: .location,
+            scope: .always,
+            actionIdentity: "old-location-purpose"
+        )
+        permissionLedger.grant(
+            subject: subject,
+            capability: .location,
+            scope: .always,
+            actionIdentity: "current-location-purpose"
+        )
+        let current = HTMLAppManifest(
+            appID: subject.appID,
+            name: "Gateway App",
+            startURL: "https://apps.example.com/index.html",
+            allowedOrigins: [subject.origin],
+            capabilities: [],
+            capabilitiesV2: [
+                HTMLAppActionDeclaration(
+                    action: .getLocation,
+                    origins: [subject.origin],
+                    purposeId: "current-location-purpose",
+                    purpose: "Get the current position",
+                    scope: .always
+                )
+            ],
+            routes: ["/"],
+            cache: HTMLAppCachePolicy(
+                strategy: .networkOnly,
+                version: "2",
+                persistent: false
+            )
+        )
+        let service = HTMLAppGatewayOnboardingService(
+            gatewayRegistry: gatewayRegistry,
+            trustRegistry: trustRegistry,
+            permissionLedger: permissionLedger,
+            allowsDevelopmentMode: true
+        )
+
+        try service.activate(HTMLAppGatewayValidationReport(
+            gateway: gateway,
+            manifests: [current],
+            healthStatusCode: 200
+        ))
+
+        XCTAssertNil(permissionLedger.grant(
+            for: subject,
+            capability: .location,
+            actionIdentity: "old-location-purpose"
+        ))
+        XCTAssertNotNil(permissionLedger.grant(
+            for: subject,
+            capability: .location,
+            actionIdentity: "current-location-purpose"
+        ))
+    }
+
     func testRemovingActiveGatewayRollsBackWhenGatewayPersistenceFails() throws {
         let storage = FailingStorage()
         let gatewayRegistry = HTMLAppGatewayRegistry(storage: storage)

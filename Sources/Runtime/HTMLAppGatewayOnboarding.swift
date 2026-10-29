@@ -222,6 +222,10 @@ public final class HTMLAppGatewayOnboardingService {
                     HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == grant.capability
                 }
                 guard declaresV1 || declaresV2 else { return false }
+                if let actionIdentity = grant.actionIdentity,
+                   !manifest.capabilitiesV2.contains(where: { $0.purposeId == actionIdentity }) {
+                    return false
+                }
                 return manifest.allowedOrigins
                     .compactMap(HTMLAppOrigin.canonicalDeclaredOrigin)
                     .contains(grant.origin)
