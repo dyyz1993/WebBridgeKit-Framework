@@ -1,0 +1,18 @@
+name: Self-hosted Smoke
+on:
+  workflow_dispatch:
+jobs:
+  smoke:
+    runs-on: [self-hosted, nas]
+    timeout-minutes: 10
+    steps:
+      - name: env probe
+        run: |
+          uname -m
+          docker info --format "dind server: {{.ServerVersion}}"
+          java -version 2>&1 | head -1
+          go version
+          node --version
+          python3 --version
+          flutter --version 2>&1 | head -1
+          gh --version | head -1
