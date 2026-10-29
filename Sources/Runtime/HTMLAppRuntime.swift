@@ -866,7 +866,7 @@ public final class HTMLAppCapabilityGateway {
         let action: HTMLAppControlledAction?
         switch request.capability {
         case .clipboard: action = .clipboard
-        case .location: action = .location
+        case .location: action = .getLocation
         default: action = nil
         }
         return action.flatMap { manifest.declaration(for: $0, origin: origin) }

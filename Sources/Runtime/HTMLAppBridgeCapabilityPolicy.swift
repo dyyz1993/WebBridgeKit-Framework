@@ -22,7 +22,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case "share": return .share
         case "fullscreen": return .fullscreen
         case "clipboard": return .clipboard
-        case "getLocation": return .location
+        case "getLocation": return .getLocation
         case "addToHomeScreen": return .addToHomeScreen
         default: return nil
         }
@@ -77,7 +77,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case .share: return .share
         case .fullscreen: return .displayStatus
         case .clipboard: return .clipboard
-        case .location: return .location
+        case .getLocation: return .location
         case .addToHomeScreen: return .homeScreen
         }
     }
@@ -86,7 +86,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
     /// declaration cannot become blanket access to user data.
     public static func isGrantBasedAction(_ action: HTMLAppControlledAction) -> Bool {
         switch action {
-        case .clipboard, .location: return true
+        case .clipboard, .getLocation: return true
         case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen: return false
         }
     }

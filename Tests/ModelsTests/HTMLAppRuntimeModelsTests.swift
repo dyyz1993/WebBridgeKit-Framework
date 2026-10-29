@@ -72,6 +72,32 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         XCTAssertTrue(manifest.validate().isValid)
     }
 
+    func testLocationActionAcceptsCurrentAndLegacyWireNames() throws {
+        let current = try JSONDecoder().decode(
+            HTMLAppControlledAction.self,
+            from: Data(#""getLocation""#.utf8)
+        )
+        let legacy = try JSONDecoder().decode(
+            HTMLAppControlledAction.self,
+            from: Data(#""location""#.utf8)
+        )
+
+        XCTAssertEqual(current, .getLocation)
+        XCTAssertEqual(legacy, .getLocation)
+        XCTAssertEqual(
+            String(data: try JSONEncoder().encode(current), encoding: .utf8),
+            #""getLocation""#
+        )
+        XCTAssertEqual(
+            HTMLAppBridgeCapabilityPolicy.controlledAction(for: "getLocation"),
+            .getLocation
+        )
+        XCTAssertEqual(
+            HTMLAppBridgeCapabilityPolicy.capability(for: .getLocation),
+            .location
+        )
+    }
+
     func testFullscreenDeclarationDecodesAndMatchesExactOrigin() throws {
         let declaration = HTMLAppActionDeclaration(
             action: .fullscreen,
