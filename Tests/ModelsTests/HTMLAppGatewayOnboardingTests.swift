@@ -181,7 +181,7 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
         let privateKey = Curve25519.Signing.PrivateKey()
         let unsigned = manifest()
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let signature = try privateKey.signature(for: encoder.encode(unsigned))
         let signed = manifest(signature: HTMLAppManifestSignature(
             algorithm: "ed25519",
@@ -225,7 +225,7 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
         )
         let unsigned = manifest(drelOffline: offline)
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let signature = try privateKey.signature(for: encoder.encode(unsigned))
         let signed = manifest(
             drelOffline: offline,
@@ -283,7 +283,7 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
         let digest = SHA256.hash(data: webManifestData).map { String(format: "%02x", $0) }.joined()
         let unsigned = manifest(webManifest: .init(url: webManifestURL, sha256: digest))
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let signature = try privateKey.signature(for: encoder.encode(unsigned))
         let signed = manifest(
             webManifest: unsigned.webManifest,
@@ -376,7 +376,7 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
             sha256: String(repeating: "a", count: 64)
         ))
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let signature = try privateKey.signature(for: encoder.encode(unsigned))
         let signed = manifest(
             webManifest: unsigned.webManifest,
@@ -431,7 +431,7 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
         )
         let unsigned = manifest(webManifest: binding)
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let signature = try privateKey.signature(for: encoder.encode(unsigned))
         let tampered = manifest(
             webManifest: HTMLAppWebManifestBinding(

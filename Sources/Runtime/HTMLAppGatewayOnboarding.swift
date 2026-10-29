@@ -425,7 +425,7 @@ public final class HTMLAppGatewayOnboardingService {
             drelOffline: manifest.drelOffline
         )
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(unsigned)
     }
 
