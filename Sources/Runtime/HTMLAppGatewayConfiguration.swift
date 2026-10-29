@@ -225,13 +225,16 @@ public struct HTMLAppGatewayConfiguration: Codable, Equatable, Sendable, Identif
     }
 
     private static func isValidEndpointPath(_ path: String, relativeTo baseURL: URL) -> Bool {
+        // A query string is allowed: same-origin is still enforced on the
+        // resolved URL, and hosts use it for key-scoped manifest listings.
+        // Everything that could smuggle a different origin (scheme, host,
+        // credentials, fragment) stays rejected.
         guard path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains("\\"),
               let components = URLComponents(string: path),
               components.scheme == nil,
               components.host == nil,
               components.user == nil,
               components.password == nil,
-              components.query == nil,
               components.fragment == nil,
               let decodedPath = components.percentEncodedPath.removingPercentEncoding,
               !decodedPath.contains("\\"),
