@@ -30,7 +30,14 @@ public final class HTMLAppGatewayURLSessionTransport: HTMLAppGatewayTransport {
     }
 
     public func get(_ url: URL, completion: @escaping (Result<HTMLAppGatewayTransportResponse, Error>) -> Void) {
-        session.dataTask(with: url) { data, response, error in
+        // Gateway health and signed manifests are trust inputs, so every
+        // validation must hit the network rather than reuse an old URLSession
+        // response whose signature or action catalog may have been revoked.
+        let request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData
+        )
+        session.dataTask(with: request) { data, response, error in
             if let error {
                 completion(.failure(error))
                 return

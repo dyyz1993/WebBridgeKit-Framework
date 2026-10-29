@@ -8,6 +8,28 @@ import XCTest
 @testable import WebBridgeKit
 
 final class HTMLAppGatewayOnboardingTests: XCTestCase {
+    private final class CapturingURLProtocol: URLProtocol {
+        static var lastRequest: URLRequest?
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            Self.lastRequest = request
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/2",
+                headerFields: ["content-type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(#"{"status":"ok","schemaVersion":"1"}"#.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
+
     private final class MemoryStorage: HTMLAppRuntimeStorage {
         var values: [String: Data] = [:]
         func data(forKey key: String) -> Data? { values[key] }
@@ -42,6 +64,25 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
     }
 
     private var validHealth: Data { Data(#"{"status":"ok","schemaVersion":"1"}"#.utf8) }
+
+    func testURLSessionTransportBypassesCachedGatewayDocuments() {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let transport = HTMLAppGatewayURLSessionTransport(session: session)
+        let expectation = expectation(description: "gateway request")
+        let url = URL(string: "https://gateway.example.com/api/v1/html-apps")!
+        var response: HTMLAppGatewayTransportResponse?
+
+        transport.get(url) { result in
+            response = try? result.get()
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
+
+        XCTAssertEqual(CapturingURLProtocol.lastRequest?.cachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertEqual(response?.statusCode, 200)
+    }
 
     private func manifest(
         webManifest: HTMLAppWebManifestBinding? = nil,
