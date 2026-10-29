@@ -46,7 +46,7 @@ final class PermissionGrantPersistenceTests: XCTestCase {
             capabilities: [.location],
             capabilitiesV2: [
                 HTMLAppActionDeclaration(
-                    action: .location,
+                    action: .getLocation,
                     origins: [origin],
                     purposeId: "demo-location",
                     purpose: "获取当前位置完成演示",
@@ -219,7 +219,7 @@ final class PermissionGrantPersistenceTests: XCTestCase {
             capabilities: [], // V1 为空！这正是 action-demo 的真实形态
             capabilitiesV2: [
                 HTMLAppActionDeclaration(
-                    action: .location,
+                    action: .getLocation,
                     origins: ["https://drel.app"],
                     purposeId: "pure-v2-location",
                     purpose: "定位",

@@ -64,8 +64,29 @@ public enum HTMLAppControlledAction: String, CaseIterable, Codable, Sendable {
     case share
     case fullscreen
     case clipboard
-    case location
+    case getLocation
     case addToHomeScreen
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "getLocation", "location":
+            self = .getLocation
+        default:
+            guard let action = Self(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(
+                    in: try decoder.singleValueContainer(),
+                    debugDescription: "Unknown controlled action: \(raw)"
+                )
+            }
+            self = action
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct HTMLAppActionDeclaration: Codable, Equatable, Sendable {
