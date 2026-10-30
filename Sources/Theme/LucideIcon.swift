@@ -11,6 +11,7 @@ public enum LucideIcon: CaseIterable {
     case volume, mic, camera
     case server, hardDrive, network, globe, doc, folder
     case ellipsis, circle, qrCode
+    case cloudDownload
 
     var lucideId: String {
         switch self {
@@ -80,12 +81,14 @@ public enum LucideIcon: CaseIterable {
         case .ellipsis: return "more-horizontal"
         case .circle: return "circle"
         case .qrCode: return "qr-code"
+        case .cloudDownload: return "cloud-download"
         }
     }
 
     var sfSymbolName: String {
         switch self {
         case .home: return "house.fill"
+        case .cloudDownload: return "arrow.down.doc"
         case .inbox: return "tray.fill"
         case .compass: return "compass.fill"
         case .settings: return "gearshape.fill"
