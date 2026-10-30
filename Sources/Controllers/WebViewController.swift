@@ -11,7 +11,7 @@ import RealmSwift
 
 /// 统一的 Web 容器，支持横竖屏控制、全屏控制与 JSBridge
 @MainActor
-public class WebViewController: UIViewController, UINavigationControllerDelegate, WKScriptMessageHandler, WKNavigationDelegate {
+public class WebViewController: UIViewController, UINavigationControllerDelegate, UIGestureRecognizerDelegate, WKScriptMessageHandler, WKNavigationDelegate {
 
     // MARK: - Properties
 
@@ -66,6 +66,8 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     }()
 
     private let immersiveExitControl = ImmersivePWAExitControl()
+    private var immersiveHistoryBackGesture: UIPanGestureRecognizer?
+    private var immersiveHistoryBackEdgeView: UIView?
     private var managedHTMLAppID: String?
     private var managedHTMLAppDocumentURL: URL?
 
@@ -530,6 +532,7 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     }
 
     private func setupImmersiveReturnButton() {
+        setupImmersiveHistoryGesture()
         view.addSubview(immersiveExitControl)
         immersiveExitControl.onExit = { [weak self] in self?.exitImmersivePWA() }
         immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePWA() }
@@ -559,6 +562,8 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     private func updateImmersiveChrome() {
         let immersive = browserConfig?.displayMode == .immersive || browserConfig?.hideNavigationBar == true
         navigationController?.setNavigationBarHidden(immersive, animated: false)
+        immersiveHistoryBackEdgeView?.isHidden = !immersive
+        webView.allowsBackForwardNavigationGestures = !immersive && backForwardGesturesEnabled
         immersiveExitControl.isHidden = !immersive
         immersiveSettingsButton.isHidden = !immersive || managedHTMLAppID == nil
         immersiveExitControl.updateLayout(in: view)
@@ -572,6 +577,46 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         } else {
             navigationItem.rightBarButtonItem = moreButton
             refreshFavoriteButtonState()
+        }
+    }
+
+    private func setupImmersiveHistoryGesture() {
+        let edgeView = UIView()
+        edgeView.translatesAutoresizingMaskIntoConstraints = false
+        edgeView.backgroundColor = .clear
+        view.addSubview(edgeView)
+        NSLayoutConstraint.activate([
+            edgeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            edgeView.topAnchor.constraint(equalTo: view.topAnchor),
+            edgeView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            edgeView.widthAnchor.constraint(equalToConstant: 40)
+        ])
+
+        let pan = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleImmersiveHistoryBackGesture(_:))
+        )
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self
+        edgeView.addGestureRecognizer(pan)
+        immersiveHistoryBackEdgeView = edgeView
+        immersiveHistoryBackGesture = pan
+    }
+
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === immersiveHistoryBackGesture,
+              let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: pan.view)
+        return velocity.x > abs(velocity.y) && velocity.x > 0
+    }
+
+    @objc private func handleImmersiveHistoryBackGesture(_ gesture: UIPanGestureRecognizer) {
+        guard gesture.state == .ended,
+              gesture.translation(in: view).x > 50 else { return }
+        if webView.canGoBack {
+            webView.goBack()
+        } else {
+            webView.evaluateJavaScript("window.history.back()")
         }
     }
 

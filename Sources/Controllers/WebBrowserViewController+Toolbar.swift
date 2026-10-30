@@ -159,18 +159,42 @@ extension WebBrowserViewController {
     }
 
     func setupGestures() {
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        tap.delegate = self
-        view.addGestureRecognizer(tap)
-        tapGesture = tap
+        let edgeView = UIView()
+        edgeView.backgroundColor = .clear
+        edgeView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(edgeView)
+        edgeView.snp.makeConstraints { make in
+            make.leading.top.bottom.equalToSuperview()
+            make.width.equalTo(40)
+        }
+
+        let historyBack = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleHistoryBackGesture(_:))
+        )
+        historyBack.maximumNumberOfTouches = 1
+        historyBack.delegate = self
+        edgeView.addGestureRecognizer(historyBack)
+        historyBackEdgeView = edgeView
+        historyBackGesture = historyBack
+        view.bringSubviewToFront(immersiveExitControl)
+        view.bringSubviewToFront(immersiveMenuButton)
     }
 
-    @objc func handleTap(_ gesture: UITapGestureRecognizer) {
-        guard hideNavBar else { return }
+    @objc private func handleHistoryBackGesture(_ gesture: UIPanGestureRecognizer) {
+        guard gesture.state == .ended,
+              gesture.translation(in: view).x > 50 else { return }
+        performHistoryBack()
+    }
 
-        let location = gesture.location(in: view)
-        if location.y > view.bounds.height - 100 {
-            dismissOrPop()
+    func performHistoryBack() {
+        guard hideNavBar else { return }
+        if customNavStack.count > 1 {
+            backButtonTapped()
+        } else if webView.canGoBack {
+            webView.goBack()
+        } else {
+            webView.evaluateJavaScript("window.history.back()")
         }
     }
 

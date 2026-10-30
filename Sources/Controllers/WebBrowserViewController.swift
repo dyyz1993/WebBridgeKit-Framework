@@ -114,15 +114,17 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         return button
     }()
 
-    private let immersiveExitControl = ImmersivePWAExitControl()
+    let immersiveExitControl = ImmersivePWAExitControl()
     private var runtimeFullscreenEnabled = false
 
     /// App identity from the WebBridgeKit launch payload, when this browser
     /// hosts a registered HTML app instead of a plain page.
     public private(set) var htmlAppID: String?
 
-    /// 手势 - 点击底部区域关闭（当导航栏隐藏时）
-    var tapGesture: UITapGestureRecognizer?
+    /// Fullscreen-only fallback for SPA history that WebKit's back-forward
+    /// list cannot represent (for example, History API route changes).
+    var historyBackGesture: UIPanGestureRecognizer?
+    var historyBackEdgeView: UIView?
 
     // MARK: - Bar Buttons
 
@@ -250,14 +252,10 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         webView.accessibilityIdentifier = "browserManager.webView"
         view.addSubview(webView)
         view.addSubview(immersiveExitControl)
-        immersiveExitControl.onExit = { [weak self] in
-            guard let self else { return }
-            if self.runtimeFullscreenEnabled {
-                self.applyRuntimeFullscreen(false)
-            } else {
-                self.dismissOrPop()
-            }
-        }
+        // The dedicated back cell always leaves the browser. Runtime
+        // fullscreen is toggled by the page gesture and must not turn this
+        // into a second, ambiguous "collapse fullscreen" action.
+        immersiveExitControl.onExit = { [weak self] in self?.dismissOrPop() }
         immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePage() }
         immersiveExitControl.onFavorite = { [weak self] in self?.toggleImmersiveFavorite() }
         immersiveMenuButton.addTarget(self, action: #selector(menuButtonTapped), for: .touchUpInside)
@@ -505,6 +503,10 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
 
             self.navigationController?.navigationBar.isHidden = hidden
             self.navigationController?.setNavigationBarHidden(hidden, animated: false)
+            // The custom edge gesture owns fullscreen history so WebKit's
+            // native gesture cannot consume the same swipe as a second back.
+            self.webView.allowsBackForwardNavigationGestures = !hidden
+            self.historyBackEdgeView?.isHidden = !hidden
             self.immersiveExitControl.isHidden = !hidden
             self.immersiveExitControl.updateLayout(in: self.view)
             self.refreshImmersiveMenuVisibility()
