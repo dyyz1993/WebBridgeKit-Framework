@@ -35,7 +35,9 @@ public final class ImmersivePWAExitControl: UIControl {
 
     private let size: CGFloat = 44
     private let expandedWidth: CGFloat = 188
-    private let collapsedVisibleWidth: CGFloat = 30
+    /// Collapsed controls keep only 20pt on screen. With the 44pt control
+    /// width, that is one third less protrusion than the former 30pt sliver.
+    static let collapsedVisibleWidth: CGFloat = 20
     /// Extends the tap target beyond the clipped visible sliver so a tap on
     /// the edge still registers instead of falling through to the PWA.
     private let hitAreaPadding: CGFloat = 20
@@ -207,7 +209,10 @@ public final class ImmersivePWAExitControl: UIControl {
         case .collapsed:
             image = (edge == .left ? LucideIcon.chevronRight : LucideIcon.chevronLeft)
                 .templateImage(pointSize: 18, weight: .semibold)
-            x = edge == .left ? 12 : 1
+            let visibleArrowInset = max(0, (Self.collapsedVisibleWidth - 18) / 2)
+            x = edge == .left
+                ? size - Self.collapsedVisibleWidth + visibleArrowInset
+                : visibleArrowInset
             closeImage = nil
             closeX = 0
             refreshImageView.isHidden = true
@@ -244,8 +249,8 @@ public final class ImmersivePWAExitControl: UIControl {
         case .collapsed:
             width = size
             x = edge == .left
-                ? safeArea.left - (size - collapsedVisibleWidth)
-                : hostView.bounds.width - safeArea.right - collapsedVisibleWidth
+                ? safeArea.left - (size - Self.collapsedVisibleWidth)
+                : hostView.bounds.width - safeArea.right - Self.collapsedVisibleWidth
         }
 
         return CGRect(x: x, y: y, width: width, height: size)
