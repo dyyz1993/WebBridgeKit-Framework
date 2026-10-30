@@ -13,6 +13,23 @@ extension WebBrowserViewController: UIGestureRecognizerDelegate {
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         return hideNavBar
     }
+
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === historyBackGesture else { return true }
+        guard hideNavBar,
+              let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+        let location = pan.location(in: pan.view)
+        let velocity = pan.velocity(in: pan.view)
+        return location.x <= 32 && velocity.x > abs(velocity.y)
+    }
+
+    public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard gestureRecognizer === historyBackGesture else { return false }
+        return otherGestureRecognizer is UIPanGestureRecognizer
+    }
 }
 
 // MARK: - Status Bar Control
