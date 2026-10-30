@@ -66,6 +66,10 @@ public enum HTMLAppControlledAction: String, CaseIterable, Codable, Sendable {
     case clipboard
     case getLocation
     case addToHomeScreen
+    /// Motion sensor subscriptions (accelerometer/gyroscope). Raw CoreMotion
+    /// data requires no system permission prompt and no Info.plist usage
+    /// key; the container's declaration + consent panel remain the gates.
+    case sensors
 
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
