@@ -98,6 +98,27 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         )
     }
 
+    func testSensorsIsAControlledActionMappedToMotion() throws {
+        XCTAssertEqual(
+            HTMLAppBridgeCapabilityPolicy.controlledAction(for: "sensors"),
+            .sensors
+        )
+        XCTAssertEqual(
+            HTMLAppBridgeCapabilityPolicy.capability(for: .sensors),
+            .motion
+        )
+        XCTAssertEqual(
+            String(data: try JSONEncoder().encode(HTMLAppControlledAction.sensors), encoding: .utf8),
+            #""sensors"#
+        )
+        // 签名清单里的动作声明必须能解码 sensors
+        let declaration = try JSONDecoder().decode(
+            HTMLAppActionDeclaration.self,
+            from: Data(#"{"action":"sensors","origins":["https://gyro.drel.app"],"purposeId":"gyro-tilt-steer","purpose":"游戏倾斜转向","scope":"appSession"}"#.utf8)
+        )
+        XCTAssertEqual(declaration.action, .sensors)
+    }
+
     func testFullscreenDeclarationDecodesAndMatchesExactOrigin() throws {
         let declaration = HTMLAppActionDeclaration(
             action: .fullscreen,

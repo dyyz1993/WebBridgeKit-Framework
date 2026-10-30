@@ -24,6 +24,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case "clipboard": return .clipboard
         case "getLocation": return .getLocation
         case "addToHomeScreen": return .addToHomeScreen
+        case "sensors": return .sensors
         default: return nil
         }
     }
@@ -79,6 +80,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case .clipboard: return .clipboard
         case .getLocation: return .location
         case .addToHomeScreen: return .homeScreen
+        case .sensors: return .motion
         }
     }
 
@@ -87,7 +89,8 @@ public enum HTMLAppBridgeCapabilityPolicy {
     public static func isGrantBasedAction(_ action: HTMLAppControlledAction) -> Bool {
         switch action {
         case .clipboard, .getLocation: return true
-        case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen: return false
+        // sensors：原始运动数据无系统隐私语义，与展示类动作同级，走会话声明即可
+        case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen, .sensors: return false
         }
     }
 
