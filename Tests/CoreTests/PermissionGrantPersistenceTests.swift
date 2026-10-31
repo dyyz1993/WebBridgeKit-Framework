@@ -270,4 +270,68 @@ final class PermissionGrantPersistenceTests: XCTestCase {
         XCTAssertTrue(remaining.contains { $0.capability == .location && $0.scope == .always })
         XCTAssertTrue(remaining.contains { $0.capability == .clipboard && $0.scope == .always })
     }
+
+    func testSensorsRequiresBrandedGrantAndPersistsAlwaysApproval() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = HTMLAppManifest(
+            appID: "dev.gyro.offline",
+            name: "Gyro Demo",
+            startURL: "https://gyro.drel.app/bridge-gyro.v9.html",
+            allowedOrigins: ["https://gyro.drel.app"],
+            capabilities: [],
+            capabilitiesV2: [
+                HTMLAppActionDeclaration(
+                    action: .sensors,
+                    origins: ["https://gyro.drel.app"],
+                    purposeId: "gyro-tilt-steer",
+                    purpose: "游戏倾斜转向",
+                    scope: .always
+                )
+            ],
+            routes: ["/bridge-gyro.v9.html"],
+            cache: HTMLAppCachePolicy(strategy: .networkOnly, version: "9", persistent: false)
+        )
+        try registry.register(manifest, trustPolicy: .development)
+        let gateway = HTMLAppCapabilityGateway(
+            trustRegistry: registry,
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            nativeAuthorizationProvider: GrantedProvider()
+        )
+        let subj = HTMLAppPermissionSubject(
+            gatewayIdentity: "gateway#key",
+            appID: manifest.appID,
+            origin: "https://gyro.drel.app"
+        )
+        let request = HTMLAppCapabilityRequest(
+            id: UUID().uuidString,
+            capability: .motion,
+            reason: "游戏倾斜转向",
+            scope: .always,
+            purposeId: "gyro-tilt-steer"
+        )
+        let documentURL = URL(string: "https://gyro.drel.app/bridge-gyro.v9.html")!
+
+        XCTAssertEqual(
+            gateway.requestAuthorization(subject: subj, documentURL: documentURL, request: request).status,
+            .notDetermined
+        )
+        let resolved = expectation(description: "sensors consent resolved")
+        gateway.resolveUserConsent(
+            subject: subj,
+            documentURL: documentURL,
+            request: request,
+            approvedScope: .always,
+            granted: true
+        ) { result in
+            XCTAssertEqual(result.status, .granted)
+            resolved.fulfill()
+        }
+        wait(for: [resolved], timeout: 2)
+
+        let remaining = HTMLAppPermissionLedger(storage: storage).grants(for: manifest.appID)
+        XCTAssertTrue(remaining.contains {
+            $0.capability == .motion && $0.scope == .always && $0.actionIdentity == "gyro-tilt-steer"
+        })
+    }
 }

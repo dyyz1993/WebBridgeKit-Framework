@@ -110,6 +110,21 @@ final class WebSensorsHandlerTests: XCTestCase {
         wait(for: [expectation], timeout: 2.0)
     }
 
+    func testSensorsHandler_RevocationStopsStreams() {
+        let handler = WebSensorsHandler()
+        XCTAssertTrue(handler is HTMLAppCapabilityRevocationHandling)
+
+        handler.htmlAppCapabilityDidRevoke()
+        let expectation = XCTestExpectation(description: "sensors revoked")
+        handler.handle(body: [:]) { result in
+            let data = (assertSuccess(result)["data"] as? [String: Any]) ?? [:]
+            XCTAssertEqual(data["accelerometerActive"] as? Bool, false)
+            XCTAssertEqual(data["gyroscopeActive"] as? Bool, false)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 2.0)
+    }
+
     // MARK: - Unsupported Actions
 
     func testSensorsHandler_UnsupportedAction_ReturnsError() {
