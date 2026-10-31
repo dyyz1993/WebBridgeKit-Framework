@@ -84,13 +84,22 @@ public enum HTMLAppBridgeCapabilityPolicy {
         }
     }
 
+    /// Reverse mapping used by request validation and gateway authorization.
+    public static func controlledAction(for capability: HTMLAppCapability) -> HTMLAppControlledAction? {
+        switch capability {
+        case .clipboard: return .clipboard
+        case .location: return .getLocation
+        case .motion: return .sensors
+        default: return nil
+        }
+    }
+
     /// Grant-based capabilities require explicit reusable consent so a signed
     /// declaration cannot become blanket access to user data.
     public static func isGrantBasedAction(_ action: HTMLAppControlledAction) -> Bool {
         switch action {
-        case .clipboard, .getLocation: return true
-        // sensors：原始运动数据无系统隐私语义，与展示类动作同级，走会话声明即可
-        case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen, .sensors: return false
+        case .clipboard, .getLocation, .sensors: return true
+        case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen: return false
         }
     }
 

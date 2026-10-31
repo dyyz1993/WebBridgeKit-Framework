@@ -109,14 +109,53 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         )
         XCTAssertEqual(
             String(data: try JSONEncoder().encode(HTMLAppControlledAction.sensors), encoding: .utf8),
-            #""sensors"#
+            #""sensors""#
         )
+        XCTAssertEqual(
+            HTMLAppBridgeCapabilityPolicy.controlledAction(for: .motion),
+            .sensors
+        )
+        XCTAssertTrue(HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(.sensors))
         // 签名清单里的动作声明必须能解码 sensors
         let declaration = try JSONDecoder().decode(
             HTMLAppActionDeclaration.self,
-            from: Data(#"{"action":"sensors","origins":["https://gyro.drel.app"],"purposeId":"gyro-tilt-steer","purpose":"游戏倾斜转向","scope":"appSession"}"#.utf8)
+            from: Data(#"{"action":"sensors","origins":["https://gyro.drel.app"],"purposeId":"gyro-tilt-steer","purpose":"游戏倾斜转向","scope":"always"}"#.utf8)
         )
         XCTAssertEqual(declaration.action, .sensors)
+    }
+
+    func testCapabilitiesV2RequiresAlwaysScopeForSensorsGrant() {
+        let base = HTMLAppActionDeclaration(
+            action: .sensors,
+            origins: ["https://inventory.example.com"],
+            purposeId: "gyro-tilt-steer",
+            purpose: "游戏倾斜转向",
+            scope: .appSession
+        )
+        let valid = HTMLAppActionDeclaration(
+            action: base.action,
+            origins: base.origins,
+            purposeId: base.purposeId,
+            purpose: base.purpose,
+            scope: .always
+        )
+
+        XCTAssertEqual(
+            makeManifest(capabilities: [], capabilitiesV2: [base]).validate(),
+            .invalid([.invalidActionDeclarations])
+        )
+        XCTAssertTrue(makeManifest(capabilities: [], capabilitiesV2: [valid]).validate().isValid)
+        let request = HTMLAppCapabilityRequest(
+            id: "request-sensors",
+            capability: .motion,
+            reason: "游戏倾斜转向",
+            scope: .always,
+            purposeId: "gyro-tilt-steer"
+        )
+        XCTAssertEqual(
+            request.validate(against: makeManifest(capabilities: [], capabilitiesV2: [valid])),
+            .accepted
+        )
     }
 
     func testFullscreenDeclarationDecodesAndMatchesExactOrigin() throws {

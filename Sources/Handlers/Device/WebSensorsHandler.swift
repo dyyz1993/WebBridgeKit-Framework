@@ -13,7 +13,7 @@ import CoreMotion
 
 /// 高频传感器数据 Handler
 /// 支持：加速度计、陀螺仪、设备运动数据订阅
-public class WebSensorsHandler: BaseWebNativeHandler {
+public class WebSensorsHandler: BaseWebNativeHandler, HTMLAppCapabilityRevocationHandling {
 
     // MARK: - Properties
 
@@ -151,6 +151,16 @@ public class WebSensorsHandler: BaseWebNativeHandler {
         runOnMainThread { [weak self] in
             self?.webView?.evaluateJavaScript(script, completionHandler: nil)
         }
+    }
+
+    /// Permission-center revocation must stop an already-running stream even
+    /// though the JS caller has no chance to send a stop request.
+    public func htmlAppCapabilityDidRevoke() {
+        motionManager.stopAccelerometerUpdates()
+        motionManager.stopGyroUpdates()
+        isAccelerometerActive = false
+        isGyroscopeActive = false
+        sendEventToJS(event: "onSensorsAccessRevoked", data: ["status": "revoked"])
     }
 
     deinit {

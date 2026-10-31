@@ -675,11 +675,13 @@ public struct HTMLAppCapabilityRequest: Codable, Equatable, Sendable {
         }
         // Grant-based V2 actions declare through capabilities_v2 rather than
         // the broad legacy capability array.
-        let isGrantBasedV2 = capability == .clipboard || capability == .location
-            ? manifest.capabilitiesV2.contains {
-                HTMLAppBridgeCapabilityPolicy.capability(for: $0.action) == capability
-            }
-            : false
+        let isGrantBasedV2 = manifest.capabilitiesV2.contains { declaration in
+            guard let action = HTMLAppBridgeCapabilityPolicy.controlledAction(
+                for: declaration.action.rawValue
+            ) else { return false }
+            return HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(action)
+                && HTMLAppBridgeCapabilityPolicy.capability(for: action) == capability
+        }
         guard manifest.declares(capability) || isGrantBasedV2 else {
             return .rejected(.undeclaredCapability(capability))
         }

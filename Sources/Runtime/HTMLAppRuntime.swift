@@ -867,6 +867,7 @@ public final class HTMLAppCapabilityGateway {
         switch request.capability {
         case .clipboard: action = .clipboard
         case .location: action = .getLocation
+        case .motion: action = .sensors
         default: action = nil
         }
         return action.flatMap { manifest.declaration(for: $0, origin: origin) }
