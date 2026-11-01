@@ -5,6 +5,190 @@
 
 import UIKit
 
+/// Host-owned bottom sheet for infrequent immersive actions.
+final class ImmersiveFunctionSheet: UIView {
+    struct Item {
+        let title: String
+        let subtitle: String
+        let symbol: LucideIcon
+        let action: () -> Void
+    }
+
+    private let dimmer = UIControl()
+    private let panel = UIView()
+    private var items: [Item] = []
+
+    static func show(in host: UIView, items: [Item]) {
+        guard !items.isEmpty, !host.subviews.contains(where: { $0 is ImmersiveFunctionSheet }) else { return }
+        let sheet = ImmersiveFunctionSheet(frame: host.bounds)
+        sheet.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        sheet.items = items
+        sheet.configure()
+        host.addSubview(sheet)
+        sheet.layoutIfNeeded()
+        sheet.panel.transform = CGAffineTransform(translationX: 0, y: sheet.panel.bounds.height)
+        sheet.dimmer.alpha = 0
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut]) {
+            sheet.dimmer.alpha = 1
+            sheet.panel.transform = .identity
+        }
+        UIAccessibility.post(notification: .screenChanged, argument: sheet.panel)
+    }
+
+    private func configure() {
+        accessibilityIdentifier = "immersive.functionSheet"
+        accessibilityViewIsModal = true
+        dimmer.backgroundColor = ThemeTokens.Color.overlay
+        dimmer.isAccessibilityElement = true
+        dimmer.accessibilityTraits = .button
+        dimmer.accessibilityLabel = "关闭功能菜单"
+        dimmer.addTarget(self, action: #selector(close), for: .touchUpInside)
+        addSubview(dimmer)
+        dimmer.translatesAutoresizingMaskIntoConstraints = false
+        panel.backgroundColor = ThemeTokens.Color.background
+        panel.layer.cornerRadius = 26
+        panel.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        panel.clipsToBounds = true
+        addSubview(panel)
+        panel.translatesAutoresizingMaskIntoConstraints = false
+
+        let handle = UIView()
+        handle.backgroundColor = ThemeTokens.Color.textTertiary
+        handle.layer.cornerRadius = 2.5
+        handle.translatesAutoresizingMaskIntoConstraints = false
+        let title = UILabel()
+        title.text = "应用功能"
+        title.textColor = ThemeTokens.Color.text
+        title.font = .preferredFont(forTextStyle: .headline)
+        title.adjustsFontForContentSizeCategory = true
+        title.textAlignment = .center
+        let rows = UIStackView()
+        rows.axis = .vertical
+        rows.backgroundColor = ThemeTokens.Color.surface
+        rows.layer.cornerRadius = 16
+        rows.clipsToBounds = true
+        for (index, item) in items.enumerated() {
+            let row = makeRow(item, index: index)
+            rows.addArrangedSubview(row)
+        }
+        let scroll = UIScrollView()
+        scroll.showsVerticalScrollIndicator = true
+        scroll.addSubview(rows)
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            rows.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            rows.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            rows.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            rows.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            scroll.heightAnchor.constraint(equalToConstant: min(CGFloat(items.count) * 68, 340))
+        ])
+        let content = UIStackView(arrangedSubviews: [handle, title, scroll])
+        content.axis = .vertical
+        content.alignment = .fill
+        content.spacing = 16
+        content.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(content)
+        NSLayoutConstraint.activate([
+            dimmer.leadingAnchor.constraint(equalTo: leadingAnchor), dimmer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dimmer.topAnchor.constraint(equalTo: topAnchor), dimmer.bottomAnchor.constraint(equalTo: bottomAnchor),
+            panel.centerXAnchor.constraint(equalTo: centerXAnchor), panel.bottomAnchor.constraint(equalTo: bottomAnchor),
+            panel.widthAnchor.constraint(equalTo: widthAnchor),
+            content.topAnchor.constraint(equalTo: panel.topAnchor, constant: 10),
+            content.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 20),
+            content.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -20),
+            content.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            handle.heightAnchor.constraint(equalToConstant: 5),
+            handle.widthAnchor.constraint(equalToConstant: 40)
+        ])
+        content.alignment = .center
+        title.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        scroll.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        panel.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
+    }
+
+    private func makeRow(_ item: Item, index: Int) -> UIView {
+        let button = UIButton(type: .custom)
+        button.tag = index
+        button.accessibilityLabel = item.title
+        button.addTarget(self, action: #selector(selectItem(_:)), for: .touchUpInside)
+        let iconBox = UIView()
+        iconBox.backgroundColor = ThemeTokens.Color.primarySoft
+        iconBox.layer.cornerRadius = 12
+        let icon = UIImageView(image: item.symbol.image())
+        icon.tintColor = ThemeTokens.Color.primary
+        icon.contentMode = .scaleAspectFit
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        iconBox.addSubview(icon)
+        let name = UILabel()
+        name.text = item.title
+        name.textColor = ThemeTokens.Color.text
+        name.font = .preferredFont(forTextStyle: .body)
+        name.adjustsFontForContentSizeCategory = true
+        let detail = UILabel()
+        detail.text = item.subtitle
+        detail.textColor = ThemeTokens.Color.textSecondary
+        detail.font = .preferredFont(forTextStyle: .caption1)
+        detail.adjustsFontForContentSizeCategory = true
+        let labels = UIStackView(arrangedSubviews: [name, detail])
+        labels.axis = .vertical
+        labels.spacing = 3
+        let chevron = UIImageView(image: LucideIcon.chevronRight.image())
+        chevron.tintColor = ThemeTokens.Color.textTertiary
+        chevron.contentMode = .scaleAspectFit
+        let row = UIStackView(arrangedSubviews: [iconBox, labels, chevron])
+        row.alignment = .center
+        row.spacing = 14
+        row.isUserInteractionEnabled = false
+        row.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 16),
+            row.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -16),
+            row.topAnchor.constraint(equalTo: button.topAnchor, constant: 12),
+            row.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -12),
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 68),
+            iconBox.widthAnchor.constraint(equalToConstant: 44), iconBox.heightAnchor.constraint(equalToConstant: 44),
+            icon.centerXAnchor.constraint(equalTo: iconBox.centerXAnchor), icon.centerYAnchor.constraint(equalTo: iconBox.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 21), icon.heightAnchor.constraint(equalToConstant: 21),
+            chevron.widthAnchor.constraint(equalToConstant: 12)
+        ])
+        return button
+    }
+
+    @objc private func selectItem(_ sender: UIButton) {
+        guard items.indices.contains(sender.tag) else { return }
+        let action = items[sender.tag].action
+        dismiss(completion: action)
+    }
+
+    @objc private func close() { dismiss() }
+
+    @objc private func pan(_ gesture: UIPanGestureRecognizer) {
+        let distance = max(0, gesture.translation(in: self).y)
+        if gesture.state == .changed { panel.transform = CGAffineTransform(translationX: 0, y: distance) }
+        if gesture.state == .ended || gesture.state == .cancelled {
+            if distance > 80 || gesture.velocity(in: self).y > 700 {
+                dismiss()
+            } else {
+                UIView.animate(withDuration: 0.2) { self.panel.transform = .identity }
+            }
+        }
+    }
+
+    private func dismiss(completion: (() -> Void)? = nil) {
+        UIView.animate(withDuration: 0.22, animations: {
+            self.dimmer.alpha = 0
+            self.panel.transform = CGAffineTransform(translationX: 0, y: self.panel.bounds.height)
+        }, completion: { _ in
+            self.removeFromSuperview()
+            completion?()
+        })
+    }
+
+    override func accessibilityPerformEscape() -> Bool { dismiss(); return true }
+}
+
 /// A movable host-owned exit affordance for immersive HTML applications.
 public final class ImmersivePWAExitControl: UIControl {
 

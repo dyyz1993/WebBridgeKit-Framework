@@ -653,32 +653,22 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
 
     /// 低频功能收进二级列表；展开胶囊只保留高频操作，避免遮挡网页内容。
     private func showImmersiveFunctionMenu() {
-        let menu = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        var items: [ImmersiveFunctionSheet.Item] = []
 
         if managedHTMLAppID != nil {
-            menu.addAction(UIAlertAction(title: "权限与能力", style: .default) { [weak self] _ in
+            items.append(.init(title: "权限与能力", subtitle: "查看和管理授权", symbol: .shield) { [weak self] in
                 self?.openManagedHTMLAppSettings()
             })
         }
 
         if let url = webView?.url, url.scheme == "https" || url.scheme == "http" {
-            menu.addAction(UIAlertAction(title: "复制链接", style: .default) { _ in
+            items.append(.init(title: "复制链接", subtitle: "复制当前页面地址", symbol: .link) {
                 UIPasteboard.general.string = url.absoluteString
                 HUDService.shared.showSuccess(withStatus: "链接已复制")
             })
         }
 
-        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = menu.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(
-                x: view.bounds.midX,
-                y: view.bounds.maxY - 1,
-                width: 1,
-                height: 1
-            )
-        }
-        present(menu, animated: true)
+        ImmersiveFunctionSheet.show(in: view, items: items)
     }
 
     private func exitImmersivePWA() {

@@ -9,6 +9,43 @@ import UIKit
 
 extension WebBrowserViewController {
 
+    func showImmersiveFunctionMenu() {
+        var items: [ImmersiveFunctionSheet.Item] = []
+        if viewModel.managedHTMLAppID != nil, WebBridgeHostCapabilityPolicy.nativeBridgeEnabled {
+            items.append(.init(title: "权限与能力", subtitle: "查看和管理授权", symbol: .shield) { [weak self] in
+                self?.showManagedHTMLAppSettings()
+            })
+        } else if let presenter = WebBrowserManager.shared.webGrantsPresenter {
+            items.append(.init(title: "权限与能力", subtitle: "查看和管理授权", symbol: .shield) { [weak self] in
+                guard let self else { return }
+                presenter(self)
+            })
+        }
+        if let url = webView.url, url.scheme == "https" || url.scheme == "http" {
+            items.append(.init(title: "复制链接", subtitle: "复制当前页面地址", symbol: .link) {
+                UIPasteboard.general.string = url.absoluteString
+                HUDService.shared.showSuccess(withStatus: "链接已复制")
+            })
+        }
+        items.append(.init(title: "书签", subtitle: "查看已保存的页面", symbol: .bookmark) { [weak self] in
+            self?.showBookmarks()
+        })
+        let navigationTitle = hideNavBar ? "显示导航栏" : "隐藏导航栏"
+        items.append(.init(title: navigationTitle, subtitle: "调整浏览器界面", symbol: .settings) { [weak self] in
+            guard let self else { return }
+            self.setNavigationBarHidden(!self.hideNavBar)
+        })
+        let statusTitle = isStatusBarHidden ? "显示状态栏" : "隐藏状态栏"
+        items.append(.init(title: statusTitle, subtitle: "调整系统状态栏", symbol: .settings) { [weak self] in
+            guard let self else { return }
+            self.setStatusBarHidden(!self.isStatusBarHidden)
+        })
+        items.append(.init(title: "缓存统计", subtitle: "查看网页存储用量", symbol: .hardDrive) { [weak self] in
+            self?.showSystemCacheStatistics()
+        })
+        ImmersiveFunctionSheet.show(in: view, items: items)
+    }
+
     // MARK: - Menu
 
     func showMenu() {
@@ -139,6 +176,7 @@ extension WebBrowserViewController {
 
     private func showBookmarks() {
         let bookmarksVC = WebBookmarkViewController(viewModel: WebBookmarkViewModel())
+        navigationController?.setNavigationBarHidden(false, animated: false)
         navigationController?.pushViewController(bookmarksVC, animated: true)
     }
 
