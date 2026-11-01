@@ -533,6 +533,8 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
     func setStatusBarHidden(_ hidden: Bool) {
         isStatusBarHidden = hidden
         setNeedsStatusBarAppearanceUpdate()
+        navigationController?.setNeedsStatusBarAppearanceUpdate()
+        tabBarController?.setNeedsStatusBarAppearanceUpdate()
         StructuredLogger.shared.debug("[MOBILE] [Browser] 状态栏: \(hidden ? "隐藏" : "显示")", category: .ui)
     }
 
