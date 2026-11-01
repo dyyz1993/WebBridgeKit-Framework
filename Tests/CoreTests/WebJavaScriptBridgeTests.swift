@@ -417,6 +417,74 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         XCTAssertEqual(presenter.requestCount, 0)
     }
 
+    func testMicrophoneRequiresGestureAndSignedDeclaration() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .audioLevel, scope: .always)
+        let presenter = ConsentPresenter()
+        presenter.selectedScope = .always
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+        let handler = CallCountingStub()
+        managedBridge.nativeHandlers["audioLevel"] = handler
+        managedBridge.userGestureValidationOverride = { false }
+        let denied = expectation(description: "gestureless microphone denied")
+        managedBridge.handle(body: ["action": "audioLevel", "params": ["action": "start"]]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["status"] as? String, "denied")
+            denied.fulfill()
+        }
+        wait(for: [denied], timeout: 1)
+        XCTAssertEqual(presenter.requestCount, 0)
+        XCTAssertEqual(handler.callCount, 0)
+        XCTAssertEqual(HTMLAppBridgeCapabilityPolicy.controlledAction(for: "audioLevel"), .audioLevel)
+        XCTAssertEqual(HTMLAppBridgeCapabilityPolicy.capability(for: .audioLevel), .microphone)
+        XCTAssertTrue(HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(.audioLevel))
+    }
+
+    func testEndingSessionStopsAudioEvenForPersistentGrant() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .audioLevel, scope: .always)
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+        let stopped = expectation(description: "session end stops audio")
+        managedBridge.nativeHandlers["audioLevel"] = RevocationAwareHandler(revoked: stopped)
+        managedBridge.endManagedHTMLAppSession()
+        wait(for: [stopped], timeout: 1)
+        managedBridge.nativeHandlers.removeValue(forKey: "audioLevel")
+    }
+
+    func testAudioStopBypassesGestureAndDeclaration() throws {
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: HTMLAppTrustRegistry(storage: MemoryStorage()),
+            permissionLedger: HTMLAppPermissionLedger(storage: MemoryStorage()),
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        let handler = CallCountingStub()
+        managedBridge.nativeHandlers["audioLevel"] = handler
+        managedBridge.userGestureValidationOverride = { false }
+        let stopped = expectation(description: "audio stop runs without a new grant")
+        managedBridge.handle(body: [
+            "action": "audioLevel",
+            "callbackId": "audio-stop",
+            "params": ["action": "stop"]
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
+            stopped.fulfill()
+        }
+        wait(for: [stopped], timeout: 1)
+        XCTAssertEqual(handler.callCount, 1)
+    }
+
     func testControlledActionsDoNotShareCapabilityGrantIdentity() throws {
         let ledger = HTMLAppPermissionLedger(storage: MemoryStorage())
         let subject = HTMLAppPermissionSubject(
@@ -470,6 +538,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             nativeAuthorizationProvider: NativeAuthorizationProvider()
         )
         managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
         managedBridge.configureManagedHTMLApp(
             appID: manifest.appID,
             documentURL: URL(string: manifest.startURL)
@@ -570,6 +639,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         )
         let presenter = ConsentPresenter()
         managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
         managedBridge.configureManagedHTMLApp(
             appID: manifest.appID,
             documentURL: URL(string: manifest.startURL)
@@ -613,6 +683,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         let presenter = ConsentPresenter()
         presenter.selectedScope = .always
         managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
         managedBridge.configureManagedHTMLApp(
             appID: manifest.appID,
             documentURL: URL(string: manifest.startURL)
@@ -658,6 +729,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         )
         let presenter = ConsentPresenter()
         managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
         managedBridge.configureManagedHTMLApp(
             appID: manifest.appID,
             documentURL: URL(string: manifest.startURL)
@@ -700,6 +772,7 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         let presenter = ConsentPresenter()
         presenter.completesImmediately = false
         managedBridge.permissionConsentPresenter = presenter
+        managedBridge.userGestureValidationOverride = { true }
         managedBridge.configureManagedHTMLApp(
             appID: manifest.appID,
             documentURL: URL(string: manifest.startURL)

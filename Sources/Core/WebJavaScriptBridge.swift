@@ -61,8 +61,35 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     private let pendingAuthorizationsLock = NSLock()
     private var pendingAuthorizations: [String: PendingAuthorization] = [:]
     private var permissionRevocationObserver: NSObjectProtocol?
+    private var audioBackgroundObserver: NSObjectProtocol?
     public var currentCallbackId: String?  // 改为 public，供 WebTestViewController 访问
     private let handlersLock = NSLock()  // 线程安全锁
+    private let audioSessionLock = NSLock()
+    private var audioSessionGeneration = 0
+
+    private func audioGeneration(invalidate: Bool = false) -> Int {
+        audioSessionLock.lock()
+        defer { audioSessionLock.unlock() }
+        if invalidate { audioSessionGeneration += 1 }
+        return audioSessionGeneration
+    }
+
+    private func stopAudioForSessionEnd() {
+        _ = audioGeneration(invalidate: true)
+        cancelManagedGatewayRequests()
+        handlersLock.lock()
+        let audio = nativeHandlers["audioLevel"] as? HTMLAppCapabilityRevocationHandling
+        handlersLock.unlock()
+        audio?.htmlAppCapabilityDidRevoke()
+    }
+
+    private func cancelManagedGatewayRequests() {
+        guard let appID = managedAppID,
+              let url = managedDocumentURL ?? webView?.url,
+              let origin = HTMLAppOrigin.canonicalOrigin(forDocumentURL: url),
+              let subject = permissionSubject(appID: appID, origin: origin) else { return }
+        capabilityGateway.cancelPendingRequests(subject: subject)
+    }
 
     // 活跃的请求 Token（用于自动日志）
     private var activeTokens: [String: WebBridgeLogToken] = [:]
@@ -188,6 +215,9 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         ) { [weak self] notification in
             self?.handlePermissionRevocation(notification)
         }
+        audioBackgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.stopAudioForSessionEnd() }
         registerHandlerFactories()  // 只注册工厂方法，不创建实例
     }
 
@@ -196,6 +226,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         if let permissionRevocationObserver {
             NotificationCenter.default.removeObserver(permissionRevocationObserver)
         }
+        if let audioBackgroundObserver { NotificationCenter.default.removeObserver(audioBackgroundObserver) }
     }
 
     // MARK: - WKScriptMessageHandler
@@ -252,6 +283,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func endManagedHTMLAppSession(appID: String?, documentURL: URL?) {
+        stopAudioForSessionEnd()
         guard let appID else { return }
         cancelPendingAuthorizations(appID: appID)
         guard let documentURL,
@@ -270,6 +302,11 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         guard let documentURL,
               HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL) == revocation.origin else {
             return
+        }
+
+        if revocation.capability == .microphone {
+            _ = audioGeneration(invalidate: true)
+            cancelManagedGatewayRequests()
         }
 
         handlersLock.lock()
@@ -353,7 +390,16 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             return
         }
 
-        authorizeIfNeeded(action: action, body: body) { [weak self] authorization in
+        let params = body["params"] as? [String: Any] ?? body
+        // Stopping capture must never require a new gesture or prompt.
+        let isAudioStop = action == "audioLevel" && params["action"] as? String == "stop"
+        let audioGenerationAtRequest = audioGeneration(invalidate: isAudioStop)
+        if isAudioStop { cancelManagedGatewayRequests() }
+        let authorize: (@escaping (AuthorizationDecision) -> Void) -> Void = { done in
+            if isAudioStop { done(.allowed) }
+            else { self.authorizeIfNeeded(action: action, body: body, completion: done) }
+        }
+        authorize { [weak self] authorization in
             guard let self else {
                 completion(Self.authorizationError(
                     capability: HTMLAppBridgeCapabilityPolicy.capability(for: action, body: body) ?? .deviceControl,
@@ -389,7 +435,14 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             switch authorization {
             case .allowed:
                 self.updateCommandStatus(action: action, status: .executing)
-                DispatchQueue.global(qos: .userInitiated).async {
+                let queue = action == "audioLevel" ? DispatchQueue.main : DispatchQueue.global(qos: .userInitiated)
+                queue.async {
+                    if action == "audioLevel", !isAudioStop,
+                       self.audioGeneration() != audioGenerationAtRequest {
+                        completion(Self.authorizationError(capability: .microphone, status: .denied,
+                                                           message: "麦克风请求已取消"), callbackId)
+                        return
+                    }
                     handler.handle(body: body) { [weak self] result in
                         self?.updateCommandStatus(action: action, status: .succeeded, result: result)
                         completion(result, callbackId)

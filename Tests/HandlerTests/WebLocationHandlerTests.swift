@@ -7,6 +7,7 @@ final class WebLocationHandlerTests: XCTestCase {
     private final class MockLocationProvider: WebLocationHandler.LocationProviding {
         var authorizationStatus: CLAuthorizationStatus = .authorizedWhenInUse
         var locationServicesEnabled: Bool = true
+        var lastLocation: CLLocation?
         private weak var handler: WebLocationHandler?
 
         func requestWhenInUseAuthorization() {}

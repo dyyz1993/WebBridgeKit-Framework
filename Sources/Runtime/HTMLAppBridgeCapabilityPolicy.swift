@@ -25,6 +25,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case "getLocation": return .getLocation
         case "addToHomeScreen": return .addToHomeScreen
         case "sensors": return .sensors
+        case "audioLevel": return .audioLevel
         default: return nil
         }
     }
@@ -81,6 +82,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case .getLocation: return .location
         case .addToHomeScreen: return .homeScreen
         case .sensors: return .motion
+        case .audioLevel: return .microphone
         }
     }
 
@@ -90,6 +92,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
         case .clipboard: return .clipboard
         case .location: return .getLocation
         case .motion: return .sensors
+        case .microphone: return .audioLevel
         default: return nil
         }
     }
@@ -98,7 +101,7 @@ public enum HTMLAppBridgeCapabilityPolicy {
     /// declaration cannot become blanket access to user data.
     public static func isGrantBasedAction(_ action: HTMLAppControlledAction) -> Bool {
         switch action {
-        case .clipboard, .getLocation, .sensors: return true
+        case .clipboard, .getLocation, .sensors, .audioLevel: return true
         case .haptic, .vibrate, .share, .fullscreen, .addToHomeScreen: return false
         }
     }
