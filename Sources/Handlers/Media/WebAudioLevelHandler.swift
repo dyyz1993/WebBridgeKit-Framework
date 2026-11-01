@@ -1,232 +1,167 @@
-//
-//  WebAudioLevelHandler.swift
-//  WebBridgeKit
-//
-//  Created by Claude on 2025-01-13.
-//  Copyright © 2025年 WebBridgeKit. All rights reserved.
-//
-
+// Foreground, level-only microphone monitoring for web apps.
 import AVFoundation
-import Foundation
+import UIKit
 import WebKit
 
-// Framework imports
-
-/// 实时音频音量监控处理器
-/// 用于游戏控制：通过声音大小控制角色跳跃高度
-public class WebAudioLevelHandler: BaseWebNativeHandler {
-
+public class WebAudioLevelHandler: BaseWebNativeHandler, HTMLAppCapabilityRevocationHandling {
     private var audioEngine: AVAudioEngine?
     private var levelTimer: DispatchSourceTimer?
     private var isMonitoring = false
+    private var generation = 0 // Main queue only.
+    private var backgroundObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    private let levelLock = NSLock()
+    private var currentRMS: Float = 0
+    private var sensitivity: Float = 5
 
-    // 当前音量值 (0.0 - 1.0)
-    private var currentLevel: Float = 0
-
-    // 音量放大倍数（可配置，默认 5.0 降低基础灵敏度）
-    private var levelMultiplier: Float = 5.0
-
-    /**
-     * 处理音频监控请求
-     * - Parameters:
-     *   - body: 请求参数字典 (action, fps, sensitivity)
-     *   - completion: 结果回调
-     */
-    public override func handle(body: [String: Any], completion: @escaping (Any) -> Void) {
-        // 从 params 中获取参数，兼容直接在 body 中传参的情况
-        let params = body["params"] as? [String: Any] ?? body
-        let action = params["action"] as? String ?? "start"
-
-        // 兼容从 JS 传递过来的数字类型（JS 数字在桥接时通常表现为 NSNumber）
-        let fps = (params["fps"] as? NSNumber)?.intValue ?? 30
-        let sensitivity = (params["sensitivity"] as? NSNumber)?.floatValue ?? 5.0
-
-        switch action {
-        case "start":
-            startMonitoring(fps: fps, sensitivity: sensitivity, completion: completion)
-        case "stop":
-            stopMonitoring(completion: completion)
-        case "setSensitivity":
-            setSensitivity(sensitivity, completion: completion)
-        default:
-            reject(error: "Unknown action: \(action)", completion: completion)
+    public override init() {
+        super.init()
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.stop(notify: true) }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let value = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  value == AVAudioSession.InterruptionType.began.rawValue else { return }
+            self?.stop(notify: true)
         }
     }
 
-    /**
-     * 开始监听麦克风音量
-     * - Parameters:
-     *   - fps: 上报频率
-     *   - sensitivity: 灵敏度
-     *   - completion: 结果回调
-     */
-    private func startMonitoring(fps: Int, sensitivity: Float, completion: @escaping (Any) -> Void) {
-        // 检查权限
-        let status = AVAudioSession.sharedInstance().recordPermission
-        if status == .denied {
-            self.rejectPermissionDenied(type: .microphone, status: .denied, completion: completion)
-            return
-        } else if status == .undetermined {
-            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
-                self?.runOnMainThread {
-                    if granted {
-                        self?.startMonitoring(fps: fps, sensitivity: sensitivity, completion: completion)
-                    } else {
-                        self?.rejectPermissionDenied(type: .microphone, status: .denied, completion: completion)
-                    }
-                }
+    public override func handle(body: [String: Any], completion: @escaping (Any) -> Void) {
+        let params = body["params"] as? [String: Any] ?? body
+        let action = params["action"] as? String ?? "start"
+        let fps = min(30, max(1, (params["fps"] as? NSNumber)?.intValue ?? 30))
+        let rawSensitivity = (params["sensitivity"] as? NSNumber)?.floatValue ?? 5
+        let sensitivity = rawSensitivity.isFinite ? min(20, max(0, rawSensitivity)) : 5
+        let work = { [weak self] in
+            guard let self else { return }
+            switch action {
+            case "start": self.start(fps: fps, sensitivity: sensitivity, completion: completion)
+            case "stop":
+                self.stop(notify: false)
+                self.resolve(["message": "Monitoring stopped"], completion: completion)
+            case "setSensitivity":
+                self.sensitivity = sensitivity
+                self.resolve(["sensitivity": sensitivity], completion: completion)
+            default: self.reject(error: "Unknown action: \(action)", completion: completion)
             }
+        }
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
+    }
+
+    private func start(fps: Int, sensitivity: Float, completion: @escaping (Any) -> Void) {
+        guard UIApplication.shared.applicationState == .active else {
+            reject(error: "Microphone requires the foreground", completion: completion)
             return
         }
-
-        // 设置灵敏度
-        self.levelMultiplier = sensitivity
-
-        // 防止重复启动
         guard !isMonitoring else {
             reject(error: "Audio monitoring is already running", completion: completion)
             return
         }
-
-        runOnMainThread { [weak self] in
-            guard let self = self else {
-                return
+        let currentGeneration = generation
+        let session = AVAudioSession.sharedInstance()
+        switch session.recordPermission {
+        case .denied:
+            rejectPermissionDenied(type: .microphone, status: .denied, completion: completion)
+            return
+        case .undetermined:
+            session.requestRecordPermission { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard self.generation == currentGeneration,
+                          UIApplication.shared.applicationState == .active else {
+                        self.reject(error: "Microphone request was cancelled", completion: completion)
+                        return
+                    }
+                    if granted {
+                        self.start(fps: fps, sensitivity: sensitivity, completion: completion)
+                    } else {
+                        self.rejectPermissionDenied(type: .microphone, status: .denied, completion: completion)
+                    }
+                }
             }
-
-            do {
-                // 配置音频会话
-                let audioSession = AVAudioSession.sharedInstance()
-                try audioSession.setCategory(
-                    .playAndRecord,
-                    mode: .default,
-                    options: [.defaultToSpeaker, .allowBluetoothA2DP]
+            return
+        case .granted: break
+        @unknown default:
+            reject(error: "Microphone permission unavailable", completion: completion)
+            return
+        }
+        do {
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setActive(true)
+            let engine = AVAudioEngine()
+            let input = engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            guard format.channelCount > 0, format.sampleRate > 0 else {
+                throw NSError(domain: "WebAudioLevel", code: 1, userInfo: [NSLocalizedDescriptionKey: "No microphone input"])
+            }
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                guard let self, let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+                var sum: Float = 0
+                for index in 0..<Int(buffer.frameLength) { sum += samples[index] * samples[index] }
+                let rms = sqrt(sum / Float(buffer.frameLength))
+                self.levelLock.lock()
+                self.currentRMS = rms
+                self.levelLock.unlock()
+            }
+            audioEngine = engine
+            engine.prepare()
+            try engine.start()
+            self.sensitivity = sensitivity
+            isMonitoring = true
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now(), repeating: 1.0 / Double(fps), leeway: .milliseconds(5))
+            timer.setEventHandler { [weak self] in
+                guard let self, self.isMonitoring else { return }
+                self.levelLock.lock()
+                let value = min(1, self.currentRMS * self.sensitivity)
+                self.levelLock.unlock()
+                // Do not log continuous microphone-derived measurements.
+                self.webView?.evaluateJavaScript(
+                    "window.BarkBridge?.receiveEvent('onAudioLevelChange', {level: \(value)});"
                 )
-                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-
-                StructuredLogger.shared.debug("[MIC] [AudioLevel] Audio session configured", category: .handler)
-
-                // 创建音频引擎
-                self.audioEngine = AVAudioEngine()
-                guard let inputNode = self.audioEngine?.inputNode else {
-                    self.isMonitoring = false
-                    self.reject(error: "Failed to get audio input node", completion: completion)
-                    return
-                }
-                let format = inputNode.outputFormat(forBus: 0)
-
-                StructuredLogger.shared.debug("[MIC] [AudioLevel] Audio format: \(format)", category: .handler)
-
-                // 安装音频 tap - 实时处理音频数据
-                inputNode.installTap(onBus: 0, bufferSize: WebBridgeKitConfiguration.Audio.bufferSize, format: format) { [weak self] buffer, _ in
-                    self?.processAudioBuffer(buffer)
-                }
-
-                // 在某些情况下需要确保 inputNode 已经连接
-                self.audioEngine?.prepare()
-
-                // 启动音频引擎
-                try self.audioEngine?.start()
-                self.isMonitoring = true
-
-                StructuredLogger.shared.debug("[MIC] [AudioLevel] Audio engine started", category: .handler)
-
-                // 启动定时器发送结果
-                self.startTimer(fps: fps)
-
-                self.resolve(["message": "Monitoring started"], completion: completion)
-
-            } catch {
-                self.isMonitoring = false
-                self.audioEngine?.stop()
-                self.audioEngine?.inputNode.removeTap(onBus: 0)
-                self.audioEngine = nil
-                self.reject(error: "Failed to start audio engine: \(error.localizedDescription)", completion: completion)
             }
+            levelTimer = timer
+            timer.resume()
+            resolve(["message": "Monitoring started", "fps": fps], completion: completion)
+        } catch {
+            stop(notify: false)
+            reject(error: "Failed to start audio engine: \(error.localizedDescription)", completion: completion)
         }
     }
 
-    /**
-     * 处理音频缓冲区，计算 RMS 音量
-     * - Parameter buffer: 音频缓冲区
-     */
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData?[0] else { return }
-        let frameLength = UInt32(buffer.frameLength)
-
-        var sum: Float = 0
-        for i in 0..<Int(frameLength) {
-            sum += channelData[i] * channelData[i]
-        }
-
-        let rms = sqrt(sum / Float(frameLength))
-        // 使用灵敏度进行缩放，并限制在 0-1 之间
-        self.currentLevel = min(1.0, rms * levelMultiplier)
-    }
-
-    /**
-     * 启动定时器，按指定频率向 JS 发送音量数据
-     * - Parameter fps: 每秒发送次数
-     */
-    private func startTimer(fps: Int) {
+    private func stop(notify: Bool) {
+        generation += 1
+        let wasMonitoring = isMonitoring
+        isMonitoring = false
         levelTimer?.cancel()
-
-        let interval = 1.0 / Double(max(1, fps))
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
-        timer.schedule(deadline: .now(), repeating: interval)
-
-        timer.setEventHandler { [weak self] in
-            guard let self = self, self.isMonitoring else { return }
-            self.sendLevelToJS()
+        levelTimer = nil
+        if let engine = audioEngine {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            audioEngine = nil
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
-
-        self.levelTimer = timer
-        timer.resume()
+        levelLock.lock()
+        currentRMS = 0
+        levelLock.unlock()
+        if notify && wasMonitoring { sendEventToJS(event: "onAudioLevelStopped", data: ["status": "stopped"]) }
     }
 
-    /**
-     * 通过 WebView 执行 JS 回调上报音量
-     */
-    private func sendLevelToJS() {
-        // 使用统一的事件发送机制
-        sendEventToJS(event: "onAudioLevelChange", data: ["level": currentLevel])
-
-        // 同时保留旧的直接调用方式，确保最大兼容性
-        let jsCode = "if(window.onAudioLevelChange) { window.onAudioLevelChange(\(currentLevel)); } else if(window.onAudioLevel) { window.onAudioLevel(\(currentLevel)); }"
-
-        runOnMainThread { [weak self] in
-            self?.webView?.evaluateJavaScript(jsCode)
+    public func htmlAppCapabilityDidRevoke() {
+        if Thread.isMainThread {
+            stop(notify: true)
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.stop(notify: true) }
         }
     }
 
-    /**
-     * 停止监听麦克风
-     * - Parameter completion: 结果回调
-     */
-    private func stopMonitoring(completion: @escaping (Any) -> Void) {
-        runOnMainThread { [weak self] in
-            guard let self = self else { return }
-
-            self.levelTimer?.cancel()
-            self.levelTimer = nil
-
-            self.audioEngine?.stop()
-            self.audioEngine?.inputNode.removeTap(onBus: 0)
-            self.audioEngine = nil
-
-            self.isMonitoring = false
-
-            self.resolve(["message": "Monitoring stopped"], completion: completion)
-        }
-    }
-
-    /**
-     * 动态调整音量灵敏度
-     * - Parameters:
-     *   - sensitivity: 灵敏度倍数
-     *   - completion: 结果回调
-     */
-    private func setSensitivity(_ sensitivity: Float, completion: @escaping (Any) -> Void) {
-        self.levelMultiplier = sensitivity
-        resolve(["sensitivity": sensitivity], completion: completion)
+    deinit {
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        levelTimer?.cancel()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
     }
 }

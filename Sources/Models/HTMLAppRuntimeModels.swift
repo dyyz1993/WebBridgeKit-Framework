@@ -70,6 +70,8 @@ public enum HTMLAppControlledAction: String, CaseIterable, Codable, Sendable {
     /// data requires no system permission prompt and no Info.plist usage
     /// key; the container's declaration + consent panel remain the gates.
     case sensors
+    /// Foreground audio-level monitoring; raw microphone audio is never exposed.
+    case audioLevel
 
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
@@ -526,9 +528,9 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
                 || !declarationOrigins.allSatisfy(canonicalOrigins.contains) {
                 return [.invalidActionDeclarations]
             }
-            // Clipboard and location are the only user-data grants; their
-            // declaration sets the allowed scope and consent records exactly
-            // that scope. Other V2 actions remain non-persistent.
+            // User-data grants require persistent consent so a signed
+            // declaration alone never enables capture or disclosure. Other
+            // V2 actions remain non-persistent.
             if HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(declaration.action) {
                 if declaration.scope == .once || declaration.scope == .appSession {
                     return [.invalidActionDeclarations]

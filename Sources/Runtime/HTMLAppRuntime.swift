@@ -775,18 +775,20 @@ public final class HTMLAppCapabilityGateway {
     ) {
         let key = pendingKey(subject: subject, requestID: request.id)
         lock.lock()
-        let pendingRequest = pendingRequests.removeValue(forKey: key)
+        let pendingRequest = pendingRequests[key]
         lock.unlock()
 
         // A grant-based V2 action must still match a signed declaration at
         // consent resolution time. Legacy capabilities are not accepted here.
         if let manifest = trustRegistry.manifest(for: subject.appID),
            Self.declaration(for: request, manifest: manifest, origin: subject.origin) == nil {
+            cancelPendingRequest(key: key)
             completion(result(for: request, status: .denied, failureReason: .undeclaredCapability, authorizationLayer: .htmlApp))
             return
         }
 
         guard granted else {
+            cancelPendingRequest(key: key)
             completion(result(for: request, status: .denied, failureReason: .userCancelled, authorizationLayer: .htmlApp))
             return
         }
@@ -795,6 +797,7 @@ public final class HTMLAppCapabilityGateway {
               pendingRequest.subject == subject,
               pendingRequest.capability == request.capability,
               pendingRequest.documentOrigin == HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL) else {
+            cancelPendingRequest(key: key)
             completion(result(for: request, status: .denied, failureReason: .userCancelled, authorizationLayer: .htmlApp))
             return
         }
@@ -802,6 +805,7 @@ public final class HTMLAppCapabilityGateway {
         guard let manifest = trustRegistry.manifest(for: subject.appID),
               manifest.allows(documentURL: documentURL),
               case .accepted = request.validate(against: manifest) else {
+            cancelPendingRequest(key: key)
             completion(result(for: request, status: .denied, failureReason: .originMismatch, authorizationLayer: .htmlApp))
             return
         }
@@ -815,12 +819,20 @@ public final class HTMLAppCapabilityGateway {
         if let currentDeclaration,
            !currentDeclaration.origins.contains(subject.origin)
             || HTMLAppBridgeCapabilityPolicy.capability(for: currentDeclaration.action) != request.capability {
+            cancelPendingRequest(key: key)
             completion(result(for: request, status: .denied, failureReason: .originMismatch, authorizationLayer: .htmlApp))
             return
         }
 
         nativeAuthorizationProvider.requestAuthorization(for: request.capability) { [weak self] nativeStatus in
             guard let self else { return }
+            self.lock.lock()
+            let stillPending = self.pendingRequests.removeValue(forKey: key) != nil
+            guard stillPending else {
+                self.lock.unlock()
+                completion(self.result(for: request, status: .denied, failureReason: .userCancelled, authorizationLayer: .htmlApp))
+                return
+            }
             switch nativeStatus {
             case .granted:
                 // 用户在面板里的选择是授权范围的最终事实；签名声明里的
@@ -832,8 +844,10 @@ public final class HTMLAppCapabilityGateway {
                     scope: approvedScope,
                     actionIdentity: currentDeclaration?.purposeId
                 )
+                self.lock.unlock()
                 completion(self.result(for: request, status: .granted, scope: grant.scope))
             case .denied:
+                self.lock.unlock()
                 completion(self.result(
                     for: request,
                     status: .requiresSettings,
@@ -841,6 +855,7 @@ public final class HTMLAppCapabilityGateway {
                     authorizationLayer: .nativeSystem
                 ))
             case .restricted:
+                self.lock.unlock()
                 completion(self.result(
                     for: request,
                     status: .restricted,
@@ -848,6 +863,7 @@ public final class HTMLAppCapabilityGateway {
                     authorizationLayer: .nativeSystem
                 ))
             default:
+                self.lock.unlock()
                 completion(self.result(
                     for: request,
                     status: .notDetermined,
@@ -868,9 +884,16 @@ public final class HTMLAppCapabilityGateway {
         case .clipboard: action = .clipboard
         case .location: action = .getLocation
         case .motion: action = .sensors
+        case .microphone: action = .audioLevel
         default: action = nil
         }
         return action.flatMap { manifest.declaration(for: $0, origin: origin) }
+    }
+
+    private func cancelPendingRequest(key: String) {
+        lock.lock()
+        pendingRequests.removeValue(forKey: key)
+        lock.unlock()
     }
 
     /// Safely drops pending consent requests, e.g. when the PWA navigates to a

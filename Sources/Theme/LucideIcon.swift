@@ -83,7 +83,6 @@ public enum LucideIcon: CaseIterable {
         case .qrCode: return "qr-code"
         case .cloudDownload: return "cloud-download"
         case .cloud: return "cloud"
-        case .cloudDownload: return "cloud-download"
         }
     }
 
