@@ -47,6 +47,10 @@ public class WebCacheManager: WebCacheManaging {
                         return
                     }
                     let stats = self.groupRecordsByDomain(records)
+                    // Realm takes ownership of added objects. Keep the objects
+                    // returned to the main-thread observer unmanaged and write
+                    // separate copies built on the background Realm's thread.
+                    let snapshots = stats.map { (domain: $0.domain, size: $0.totalSize, count: $0.fileCount, date: $0.lastUpdate) }
 
                     // 保存到 Realm (可以在后台线程执行)
                     DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -56,7 +60,7 @@ public class WebCacheManager: WebCacheManaging {
                             }
                             return
                         }
-                        self.saveSystemCacheStatistics(stats)
+                        self.saveSystemCacheStatistics(snapshots)
 
                         DispatchQueue.main.async {
                             observer.onNext(stats)
@@ -484,8 +488,16 @@ public class WebCacheManager: WebCacheManaging {
     /// ```
     ///
 
-    private func saveSystemCacheStatistics(_ stats: [WebCacheStatistics]) {
+    private func saveSystemCacheStatistics(_ snapshots: [(domain: String, size: Int64, count: Int, date: Date)]) {
         guard let realm = try? Realm(configuration: WebResourceCacheManager.shared.configuration) else { return }
+        let stats = snapshots.map { snapshot in
+            let stat = WebCacheStatistics()
+            stat.domain = snapshot.domain
+            stat.totalSize = snapshot.size
+            stat.fileCount = snapshot.count
+            stat.lastUpdate = snapshot.date
+            return stat
+        }
         try? realm.write {
             realm.add(stats, update: .modified)
         }

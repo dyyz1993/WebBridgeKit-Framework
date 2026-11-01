@@ -235,7 +235,7 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         immersiveExitControl.onExit = { [weak self] in self?.dismissOrPop() }
         immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePage() }
         immersiveExitControl.onFavorite = { [weak self] in self?.toggleImmersiveFavorite() }
-        immersiveExitControl.onMore = { [weak self] in self?.showMenu() }
+        immersiveExitControl.onMore = { [weak self] in self?.showImmersiveFunctionMenu() }
 
         setupConstraints()
         setupActions()
@@ -281,6 +281,11 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
     public override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
+        if hasAppeared {
+            navigationController?.setNavigationBarHidden(hideNavBar, animated: false)
+            setNeedsStatusBarAppearanceUpdate()
+        }
+
         if let tabBarController = self.tabBarController {
             tabBarController.tabBar.isHidden = true
             tabBarController.view.setNeedsLayout()
@@ -291,10 +296,10 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
 
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        restoreUIState()
         // 浏览器页面真正离屏（pop/dismiss，而非栈内跳转）= 用户结束浏览，
         // 清除会话恢复记录，避免下次冷启动复活用户已主动关闭的页面。
         if isBeingDismissed || isMovingFromParent {
+            restoreUIState()
             WebBrowserManager.shared.clearLastSession()
         }
     }
