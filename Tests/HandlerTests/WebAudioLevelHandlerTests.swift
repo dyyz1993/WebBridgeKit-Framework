@@ -1,7 +1,63 @@
 import XCTest
+import UIKit
 @testable import WebBridgeKit
 
 final class WebAudioLevelHandlerTests: XCTestCase {
+
+    func testPermissionPromptWaitsForActiveBeforeStarting() {
+        let handler = WebAudioLevelHandler()
+        var state: UIApplication.State = .inactive
+        handler.applicationStateProvider = { state }
+        let done = expectation(description: "resumes when active")
+        DispatchQueue.main.async {
+            handler.waitForActive(expectedGeneration: 0, retries: 5) { active in
+                XCTAssertTrue(active)
+                done.fulfill()
+            }
+            state = .active
+        }
+        wait(for: [done], timeout: 2)
+    }
+
+    func testPendingStartIsCancelledByRevocation() {
+        let handler = WebAudioLevelHandler()
+        handler.applicationStateProvider = { .inactive }
+        let done = expectation(description: "revocation cancels pending start")
+        DispatchQueue.main.async {
+            handler.waitForActive(expectedGeneration: 0, retries: 5) { active in
+                XCTAssertFalse(active)
+                done.fulfill()
+            }
+            handler.htmlAppCapabilityDidRevoke()
+        }
+        wait(for: [done], timeout: 2)
+    }
+
+    func testPendingStartFailsClosedInBackground() {
+        let handler = WebAudioLevelHandler()
+        handler.applicationStateProvider = { .background }
+        let done = expectation(description: "background never starts")
+        DispatchQueue.main.async {
+            handler.waitForActive(expectedGeneration: 0, retries: 5) { active in
+                XCTAssertFalse(active)
+                done.fulfill()
+            }
+        }
+        wait(for: [done], timeout: 2)
+    }
+
+    func testPendingStartTimesOutIfInactive() {
+        let handler = WebAudioLevelHandler()
+        handler.applicationStateProvider = { .inactive }
+        let done = expectation(description: "inactive wait is bounded")
+        DispatchQueue.main.async {
+            handler.waitForActive(expectedGeneration: 0, retries: 1) { active in
+                XCTAssertFalse(active)
+                done.fulfill()
+            }
+        }
+        wait(for: [done], timeout: 2)
+    }
 
     // MARK: - Set Sensitivity
 

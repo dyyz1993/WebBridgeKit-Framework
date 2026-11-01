@@ -13,6 +13,8 @@ public class WebAudioLevelHandler: BaseWebNativeHandler, HTMLAppCapabilityRevoca
     private let levelLock = NSLock()
     private var currentRMS: Float = 0
     private var sensitivity: Float = 5
+    // Injectable to exercise the system permission prompt's inactive -> active transition.
+    var applicationStateProvider: () -> UIApplication.State = { UIApplication.shared.applicationState }
 
     public override init() {
         super.init()
@@ -51,7 +53,20 @@ public class WebAudioLevelHandler: BaseWebNativeHandler, HTMLAppCapabilityRevoca
     }
 
     private func start(fps: Int, sensitivity: Float, completion: @escaping (Any) -> Void) {
-        guard UIApplication.shared.applicationState == .active else {
+        let session = AVAudioSession.sharedInstance()
+        if applicationStateProvider() == .inactive, session.recordPermission == .granted {
+            let expectedGeneration = generation
+            waitForActive(expectedGeneration: expectedGeneration) { [weak self] active in
+                guard let self else { return }
+                if active {
+                    self.start(fps: fps, sensitivity: sensitivity, completion: completion)
+                } else {
+                    self.reject(error: "Microphone request was cancelled", completion: completion)
+                }
+            }
+            return
+        }
+        guard applicationStateProvider() == .active else {
             reject(error: "Microphone requires the foreground", completion: completion)
             return
         }
@@ -60,7 +75,6 @@ public class WebAudioLevelHandler: BaseWebNativeHandler, HTMLAppCapabilityRevoca
             return
         }
         let currentGeneration = generation
-        let session = AVAudioSession.sharedInstance()
         switch session.recordPermission {
         case .denied:
             rejectPermissionDenied(type: .microphone, status: .denied, completion: completion)
@@ -70,7 +84,7 @@ public class WebAudioLevelHandler: BaseWebNativeHandler, HTMLAppCapabilityRevoca
                 DispatchQueue.main.async {
                     guard let self else { return }
                     guard self.generation == currentGeneration,
-                          UIApplication.shared.applicationState == .active else {
+                          self.applicationStateProvider() != .background else {
                         self.reject(error: "Microphone request was cancelled", completion: completion)
                         return
                     }
@@ -128,6 +142,23 @@ public class WebAudioLevelHandler: BaseWebNativeHandler, HTMLAppCapabilityRevoca
         } catch {
             stop(notify: false)
             reject(error: "Failed to start audio engine: \(error.localizedDescription)", completion: completion)
+        }
+    }
+
+    /// A permission sheet can complete while iOS still reports `.inactive`.
+    /// Bound the wait and fail closed on background, stop, or revocation.
+    func waitForActive(expectedGeneration: Int, retries: Int = 20, completion: @escaping (Bool) -> Void) {
+        guard generation == expectedGeneration else { completion(false); return }
+        switch applicationStateProvider() {
+        case .active:
+            completion(true)
+        case .inactive where retries > 0:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                guard let self else { completion(false); return }
+                self.waitForActive(expectedGeneration: expectedGeneration, retries: retries - 1, completion: completion)
+            }
+        default:
+            completion(false)
         }
     }
 
