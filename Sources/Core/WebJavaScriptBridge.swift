@@ -435,10 +435,11 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         }
 
         // V2 actions are signed declarations and foreground gestures. Low
-        // impact actions do not create reusable privacy grants; clipboard and
-        // location continue through the grant gateway below.
-        if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action),
-           !HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(controlledAction) {
+        // impact actions do not create reusable privacy grants; grant-based
+        // actions continue through the grant gateway below. The gesture gate
+        // applies to both classes so a programmatic call can never summon a
+        // consent panel.
+        if let controlledAction = HTMLAppBridgeCapabilityPolicy.controlledAction(for: action) {
             let capability = HTMLAppBridgeCapabilityPolicy.capability(for: controlledAction)
             let hasTrustedGesture = userGestureValidationOverride?() ??
                 (UIApplication.shared.applicationState == .active && userGestureRecognizer?.consumeRecentUserGesture() == true)
@@ -460,8 +461,10 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
                 )))
                 return
             }
-            completion(.allowed)
-            return
+            if !HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(controlledAction) {
+                completion(.allowed)
+                return
+            }
         }
 
         let appID: String

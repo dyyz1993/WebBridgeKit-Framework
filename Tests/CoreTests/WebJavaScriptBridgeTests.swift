@@ -390,6 +390,33 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         XCTAssertEqual(presenter.requestCount, 0)
     }
 
+    func testGrantBasedSensorCannotSummonConsentWithoutUserGesture() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .sensors, scope: .always)
+        let presenter = ConsentPresenter()
+        presenter.selectedScope = .always
+        let managedBridge = WebJavaScriptBridge(
+            trustRegistry: registry,
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            nativeAuthorizationProvider: NativeAuthorizationProvider()
+        )
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+
+        let completed = expectation(description: "gestureless sensor grant denied")
+        managedBridge.handle(body: [
+            "action": "sensors",
+            "callbackId": "no-gesture-sensors",
+            "params": ["action": "startAccelerometer", "interval": 0.033]
+        ]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["status"] as? String, "denied")
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(presenter.requestCount, 0)
+    }
+
     func testControlledActionsDoNotShareCapabilityGrantIdentity() throws {
         let ledger = HTMLAppPermissionLedger(storage: MemoryStorage())
         let subject = HTMLAppPermissionSubject(
