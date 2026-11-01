@@ -299,6 +299,8 @@ public final class ImmersivePWAExitControl: UIControl {
             } else if closeHitFrame.contains(location) {
                 onExit?()
             } else if moreHitFrame.contains(location) {
+                presentation = .collapsed
+                updateLayout(in: superview, animated: true)
                 onMore?()
             } else {
                 // The edge-side arrow only collapses the control; exiting

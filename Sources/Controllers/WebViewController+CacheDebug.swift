@@ -161,16 +161,6 @@ extension WebViewController {
 
     /// 显示 Toast 提示
     func showToast(message: String) {
-        let alert = UIAlertController(
-            title: nil,
-            message: message,
-            preferredStyle: .alert
-        )
-        present(alert, animated: true)
-
-        Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
-            alert.dismiss(animated: true)
-        }
+        HUDService.shared.showSuccess(withStatus: message)
     }
 }

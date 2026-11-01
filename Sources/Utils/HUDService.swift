@@ -90,6 +90,12 @@ public final class HUDService {
 
         let window = makeWindow()
         self.hudWindow = window
+        switch style {
+        case .success, .error, .info:
+            window.isUserInteractionEnabled = false
+        case .default, .progress:
+            window.isUserInteractionEnabled = true
+        }
 
         // A progress state is commonly replaced immediately by success/error.
         // Remove the previous container before adding the replacement so rapid
@@ -203,6 +209,7 @@ private final class HUDContainerView: UIView {
     private let iconView = UIImageView()
     private let statusLabel = UILabel()
     private let progressView = UIProgressView(progressViewStyle: .default)
+    private let stack = UIStackView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -213,10 +220,22 @@ private final class HUDContainerView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            backgroundView.layer.borderColor = ThemeTokens.Color.border.resolvedColor(with: traitCollection).cgColor
+        }
+    }
+
     private func setupViews() {
-        backgroundView.backgroundColor = ThemeTokens.Color.overlayStrong
+        backgroundView.backgroundColor = ThemeTokens.Color.surfaceElevated
         backgroundView.layer.cornerRadius = ThemeTokens.CornerRadius.lg
-        backgroundView.layer.masksToBounds = true
+        backgroundView.layer.borderWidth = 1
+        backgroundView.layer.borderColor = ThemeTokens.Color.border.cgColor
+        backgroundView.layer.shadowColor = UIColor.black.cgColor
+        backgroundView.layer.shadowOpacity = 0.15
+        backgroundView.layer.shadowRadius = 12
+        backgroundView.layer.shadowOffset = CGSize(width: 0, height: 5)
 
         contentView.backgroundColor = .clear
 
@@ -224,17 +243,18 @@ private final class HUDContainerView: UIView {
         iconView.tintColor = ThemeTokens.Color.textOnColor
 
         statusLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 14, weight: .medium))
-        statusLabel.textColor = ThemeTokens.Color.textOnColor
-        statusLabel.textAlignment = .center
+        statusLabel.textColor = ThemeTokens.Color.text
+        statusLabel.textAlignment = .natural
         statusLabel.numberOfLines = 0
+        statusLabel.adjustsFontForContentSizeCategory = true
 
         progressView.progressTintColor = ThemeTokens.Color.primary
         progressView.trackTintColor = ThemeTokens.Color.overlaySoft
         progressView.layer.cornerRadius = ThemeTokens.CornerRadius.xs
         progressView.clipsToBounds = true
 
-        let stack = UIStackView(arrangedSubviews: [iconView, progressView, statusLabel])
-        stack.axis = .vertical
+        [iconView, progressView, statusLabel].forEach { stack.addArrangedSubview($0) }
+        stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = ThemeTokens.Spacing.sm
 
@@ -247,46 +267,61 @@ private final class HUDContainerView: UIView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         backgroundView.translatesAutoresizingMaskIntoConstraints = false
 
+        let progressWidth = progressView.widthAnchor.constraint(equalToConstant: 120)
+        let progressHeight = progressView.heightAnchor.constraint(equalToConstant: 4)
+        progressWidth.priority = .defaultHigh
+        progressHeight.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
             backgroundView.leadingAnchor.constraint(equalTo: leadingAnchor),
             backgroundView.trailingAnchor.constraint(equalTo: trailingAnchor),
             backgroundView.topAnchor.constraint(equalTo: topAnchor),
             backgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            stack.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: backgroundView.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -20),
+            stack.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: backgroundView.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -14),
 
-            iconView.widthAnchor.constraint(equalToConstant: 36),
-            iconView.heightAnchor.constraint(equalToConstant: 36),
+            iconView.widthAnchor.constraint(equalToConstant: 24),
+            iconView.heightAnchor.constraint(equalToConstant: 24),
 
-            progressView.widthAnchor.constraint(equalToConstant: 120),
-            progressView.heightAnchor.constraint(equalToConstant: 4)
+            progressWidth,
+            progressHeight
         ])
     }
 
     func configure(status: String?, style: HUDService.HUDStyle) {
         switch style {
         case .`default`:
+            stack.axis = .vertical
+            statusLabel.textAlignment = .center
             iconView.image = nil
             configureActivityIndicator()
             progressView.isHidden = true
         case .progress(let progress):
+            stack.axis = .vertical
+            statusLabel.textAlignment = .center
             iconView.image = nil
             removeActivityIndicator()
             progressView.isHidden = false
             progressView.setProgress(progress, animated: true)
         case .success:
-            iconView.image = LucideIcon.success.image()
+            stack.axis = .horizontal
+            iconView.tintColor = ThemeTokens.Color.success
+            iconView.image = LucideIcon.success.templateImage()
             removeActivityIndicator()
             progressView.isHidden = true
         case .error:
-            iconView.image = LucideIcon.error.image()
+            stack.axis = .horizontal
+            iconView.tintColor = ThemeTokens.Color.error
+            iconView.image = LucideIcon.error.templateImage()
             removeActivityIndicator()
             progressView.isHidden = true
         case .info:
-            iconView.image = LucideIcon.info.image()
+            stack.axis = .horizontal
+            iconView.tintColor = ThemeTokens.Color.info
+            iconView.image = LucideIcon.info.templateImage()
             removeActivityIndicator()
             progressView.isHidden = true
         }
@@ -305,7 +340,7 @@ private final class HUDContainerView: UIView {
     private func configureActivityIndicator() {
         removeActivityIndicator()
         let indicator = UIActivityIndicatorView(style: .large)
-        indicator.color = ThemeTokens.Color.textOnColor
+        indicator.color = ThemeTokens.Color.primary
         indicator.startAnimating()
         indicator.translatesAutoresizingMaskIntoConstraints = false
 
@@ -313,8 +348,8 @@ private final class HUDContainerView: UIView {
 
         indicator.centerXAnchor.constraint(equalTo: iconView.centerXAnchor).isActive = true
         indicator.centerYAnchor.constraint(equalTo: iconView.centerYAnchor).isActive = true
-        indicator.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        indicator.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        indicator.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        indicator.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
         // iconView 保持参与布局（image 为 nil 即不可见）作为指示器的居中锚点；
         // 若 isHidden=true，UIStackView 会把它踢出布局，指示器漂向容器角落。
