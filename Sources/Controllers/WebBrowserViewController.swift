@@ -91,29 +91,6 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         return button
     }()
 
-    /// Host-owned menu remains reachable when a managed PWA hides the native
-    /// navigation bar. It mirrors the familiar mini-program capsule affordance.
-    let immersiveMenuButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.setImage(LucideIcon.ellipsis.templateImage(pointSize: 20, weight: .semibold), for: .normal)
-        button.tintColor = ThemeTokens.Color.text
-        button.backgroundColor = ThemeTokens.Color.surfaceElevated
-        button.layer.cornerRadius = ThemeTokens.CornerRadius.full
-        button.layer.borderWidth = 1
-        button.layer.borderColor = ThemeTokens.Color.border.cgColor
-        button.layer.shadowColor = UIColor.black.cgColor
-        button.layer.shadowOpacity = Float(ThemeTokens.Shadows.sm.opacity)
-        button.layer.shadowRadius = ThemeTokens.Shadows.sm.radius
-        button.layer.shadowOffset = CGSize(
-            width: ThemeTokens.Shadows.sm.offsetX,
-            height: ThemeTokens.Shadows.sm.offsetY
-        )
-        button.accessibilityIdentifier = "browserManager.immersiveMenuButton"
-        button.accessibilityLabel = "应用设置"
-        button.isHidden = true
-        return button
-    }()
-
     let immersiveExitControl = ImmersivePWAExitControl()
     private var runtimeFullscreenEnabled = false
 
@@ -258,8 +235,7 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
         immersiveExitControl.onExit = { [weak self] in self?.dismissOrPop() }
         immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePage() }
         immersiveExitControl.onFavorite = { [weak self] in self?.toggleImmersiveFavorite() }
-        immersiveMenuButton.addTarget(self, action: #selector(menuButtonTapped), for: .touchUpInside)
-        view.addSubview(immersiveMenuButton)
+        immersiveExitControl.onMore = { [weak self] in self?.showMenu() }
 
         setupConstraints()
         setupActions()
@@ -326,7 +302,6 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
-        refreshImmersiveMenuVisibility()
 
         guard let pendingCacheLoad else { return }
         self.pendingCacheLoad = nil
@@ -509,7 +484,6 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
             self.historyBackEdgeView?.isHidden = !hidden
             self.immersiveExitControl.isHidden = !hidden
             self.immersiveExitControl.updateLayout(in: self.view)
-            self.refreshImmersiveMenuVisibility()
 
             if !hidden {
                 // 左列固定 [back, close]（configureNavigationBar），这里只同步
@@ -614,15 +588,6 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
     func refreshImmersiveFavoriteState() {
         guard let url = favoriteEntryURL else { return }
         immersiveExitControl.isFavorited = ServiceLocator.favorite.findFavorite(url: url) != nil
-    }
-
-    func refreshImmersiveMenuVisibility() {
-        let shouldShowMenu = hideNavBar && viewModel.managedHTMLAppID != nil
-        immersiveMenuButton.isHidden = !shouldShowMenu
-        immersiveMenuButton.isUserInteractionEnabled = shouldShowMenu
-        if shouldShowMenu {
-            view.bringSubviewToFront(immersiveMenuButton)
-        }
     }
 
     // MARK: - Bind ViewModel
