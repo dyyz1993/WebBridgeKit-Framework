@@ -71,27 +71,6 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     private var managedHTMLAppID: String?
     private var managedHTMLAppDocumentURL: URL?
 
-    private let immersiveSettingsButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.setImage(LucideIcon.ellipsis.templateImage(pointSize: 20, weight: .semibold), for: .normal)
-        button.tintColor = ThemeTokens.Color.text
-        button.backgroundColor = ThemeTokens.Color.surfaceElevated
-        button.layer.cornerRadius = ThemeTokens.CornerRadius.full
-        button.layer.borderWidth = 1
-        button.layer.borderColor = ThemeTokens.Color.border.cgColor
-        button.layer.shadowColor = UIColor.black.cgColor
-        button.layer.shadowOpacity = Float(ThemeTokens.Shadows.sm.opacity)
-        button.layer.shadowRadius = ThemeTokens.Shadows.sm.radius
-        button.layer.shadowOffset = CGSize(
-            width: ThemeTokens.Shadows.sm.offsetX,
-            height: ThemeTokens.Shadows.sm.offsetY
-        )
-        button.accessibilityIdentifier = "browserManager.immersiveMenuButton"
-        button.accessibilityLabel = "应用设置"
-        button.isHidden = true
-        return button
-    }()
-
     //  浏览器特性控制（默认全部禁用，通过 Bridge 按需开启）
     var bouncesEnabled = false
     var scrollIndicatorEnabled = false
@@ -537,26 +516,7 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         immersiveExitControl.onExit = { [weak self] in self?.exitImmersivePWA() }
         immersiveExitControl.onRefresh = { [weak self] in self?.reloadImmersivePWA() }
         immersiveExitControl.onFavorite = { [weak self] in self?.toggleFavoriteTapped() }
-
-        view.addSubview(immersiveSettingsButton)
-        immersiveSettingsButton.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            immersiveSettingsButton.topAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.topAnchor,
-                constant: ThemeTokens.Spacing.sm
-            ),
-            immersiveSettingsButton.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                constant: -ThemeTokens.Spacing.md
-            ),
-            immersiveSettingsButton.widthAnchor.constraint(equalToConstant: ThemeTokens.ComponentContract.TapTarget.minimumWidth),
-            immersiveSettingsButton.heightAnchor.constraint(equalToConstant: ThemeTokens.ComponentContract.TapTarget.minimumHeight)
-        ])
-        immersiveSettingsButton.addTarget(
-            self,
-            action: #selector(openManagedHTMLAppSettings),
-            for: .touchUpInside
-        )
+        immersiveExitControl.onMore = { [weak self] in self?.showImmersiveFunctionMenu() }
     }
 
     private func updateImmersiveChrome() {
@@ -565,15 +525,11 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         immersiveHistoryBackEdgeView?.isHidden = !immersive
         webView.allowsBackForwardNavigationGestures = !immersive && backForwardGesturesEnabled
         immersiveExitControl.isHidden = !immersive
-        immersiveSettingsButton.isHidden = !immersive || managedHTMLAppID == nil
         immersiveExitControl.updateLayout(in: view)
 
         if immersive {
             navigationItem.rightBarButtonItem = nil
             webView?.scrollView.contentInsetAdjustmentBehavior = .never
-            if !immersiveSettingsButton.isHidden {
-                view.bringSubviewToFront(immersiveSettingsButton)
-            }
         } else {
             navigationItem.rightBarButtonItem = moreButton
             refreshFavoriteButtonState()
@@ -693,6 +649,36 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         // 权限中心要求全屏（无底部 Tab，靠导航栏返回）
         settings.hidesBottomBarWhenPushed = true
         navigationController?.pushViewController(settings, animated: true)
+    }
+
+    /// 低频功能收进二级列表；展开胶囊只保留高频操作，避免遮挡网页内容。
+    private func showImmersiveFunctionMenu() {
+        let menu = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+
+        if managedHTMLAppID != nil {
+            menu.addAction(UIAlertAction(title: "权限与能力", style: .default) { [weak self] _ in
+                self?.openManagedHTMLAppSettings()
+            })
+        }
+
+        if let url = webView?.url, url.scheme == "https" || url.scheme == "http" {
+            menu.addAction(UIAlertAction(title: "复制链接", style: .default) { _ in
+                UIPasteboard.general.string = url.absoluteString
+                HUDService.shared.showSuccess(withStatus: "链接已复制")
+            })
+        }
+
+        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = menu.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(
+                x: view.bounds.midX,
+                y: view.bounds.maxY - 1,
+                width: 1,
+                height: 1
+            )
+        }
+        present(menu, animated: true)
     }
 
     private func exitImmersivePWA() {

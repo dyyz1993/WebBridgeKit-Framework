@@ -25,6 +25,8 @@ public final class ImmersivePWAExitControl: UIControl {
     public var onRefresh: (() -> Void)?
     /// Expanded 收藏格：与两壳工具栏星标写入同一收藏表；点击只切换，不收起。
     public var onFavorite: (() -> Void)?
+    /// 二级功能入口：权限、书签等低频操作收进这里，避免常驻右上角胶囊。
+    public var onMore: (() -> Void)?
     /// 当前页面收藏态；由宿主在导航或切换后刷新，展开态实时反映。
     public var isFavorited: Bool = false {
         didSet {
@@ -34,7 +36,7 @@ public final class ImmersivePWAExitControl: UIControl {
     }
 
     private let size: CGFloat = 44
-    private let expandedWidth: CGFloat = 188
+    private let expandedWidth: CGFloat = 236
     /// Collapsed controls keep only 20pt on screen. With the 44pt control
     /// width, that is one third less protrusion than the former 30pt sliver.
     static let collapsedVisibleWidth: CGFloat = 20
@@ -48,9 +50,11 @@ public final class ImmersivePWAExitControl: UIControl {
     private let closeImageView = UIImageView()
     private let refreshImageView = UIImageView()
     private let favoriteImageView = UIImageView()
+    private let moreImageView = UIImageView()
     private let actionDivider = UIView()
     private let favoriteDivider = UIView()
     private let closeDivider = UIView()
+    private let moreDivider = UIView()
     private lazy var panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
     private lazy var tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
 
@@ -110,6 +114,8 @@ public final class ImmersivePWAExitControl: UIControl {
                 updateLayout(in: superview, animated: true)
             } else if closeHitFrame.contains(location) {
                 onExit?()
+            } else if moreHitFrame.contains(location) {
+                onMore?()
             } else {
                 // The edge-side arrow only collapses the control; exiting
                 // lives in the dedicated close cell so accidental exits are
@@ -164,12 +170,15 @@ public final class ImmersivePWAExitControl: UIControl {
         addSubview(closeImageView)
         addSubview(refreshImageView)
         addSubview(favoriteImageView)
+        addSubview(moreImageView)
         actionDivider.backgroundColor = ThemeTokens.Color.border
         addSubview(actionDivider)
         favoriteDivider.backgroundColor = ThemeTokens.Color.border
         addSubview(favoriteDivider)
         closeDivider.backgroundColor = ThemeTokens.Color.border
         addSubview(closeDivider)
+        moreDivider.backgroundColor = ThemeTokens.Color.border
+        addSubview(moreDivider)
         updateArrow()
     }
 
@@ -194,18 +203,19 @@ public final class ImmersivePWAExitControl: UIControl {
             favoriteImageView.tintColor = isFavorited ? ThemeTokens.Color.warning : ThemeTokens.Color.text
             favoriteImageView.frame = favoriteHitFrame.insetBy(dx: 13, dy: 13)
             favoriteImageView.isHidden = false
-            closeDivider.frame = CGRect(
-                x: edge == .left ? 139.5 : 48.5,
-                y: 10,
-                width: 1,
-                height: size - 20
-            )
+            moreImageView.image = LucideIcon.ellipsis.templateImage(pointSize: 18, weight: .semibold)
+            moreImageView.tintColor = ThemeTokens.Color.text
+            moreImageView.frame = moreHitFrame.insetBy(dx: 13, dy: 13)
+            moreImageView.isHidden = false
+            closeDivider.frame = CGRect(x: edge == .left ? 139.5 : 92.5, y: 10, width: 1, height: size - 20)
             closeDivider.isHidden = false
-            actionDivider.frame = CGRect(x: edge == .left ? 43.5 : 144.5, y: 10, width: 1, height: size - 20)
+            actionDivider.frame = CGRect(x: edge == .left ? 43.5 : 140.5, y: 10, width: 1, height: size - 20)
             actionDivider.isHidden = false
-            favoriteDivider.frame = CGRect(x: edge == .left ? 91.5 : 96.5, y: 10, width: 1, height: size - 20)
+            favoriteDivider.frame = CGRect(x: edge == .left ? 91.5 : 44.5, y: 10, width: 1, height: size - 20)
             favoriteDivider.isHidden = false
-            accessibilityLabel = isFavorited ? "收起、关闭、刷新或取消收藏" : "收起、关闭、刷新或收藏网页"
+            moreDivider.frame = CGRect(x: edge == .left ? 187.5 : 188.5, y: 10, width: 1, height: size - 20)
+            moreDivider.isHidden = false
+            accessibilityLabel = "收起、关闭、刷新、收藏网页或打开更多功能"
         case .collapsed:
             image = (edge == .left ? LucideIcon.chevronRight : LucideIcon.chevronLeft)
                 .templateImage(pointSize: 18, weight: .semibold)
@@ -217,9 +227,11 @@ public final class ImmersivePWAExitControl: UIControl {
             closeX = 0
             refreshImageView.isHidden = true
             favoriteImageView.isHidden = true
+            moreImageView.isHidden = true
             actionDivider.isHidden = true
             favoriteDivider.isHidden = true
             closeDivider.isHidden = true
+            moreDivider.isHidden = true
             accessibilityLabel = "显示浏览器控制条"
         }
 
@@ -256,7 +268,7 @@ public final class ImmersivePWAExitControl: UIControl {
         return CGRect(x: x, y: y, width: width, height: size)
     }
 
-    /// 展开态四格：左缘 [收起 0-44 | 关闭 48-92 | 刷新 96-140 | 收藏 144-188]，右缘镜像。
+    /// 展开态五格：左缘 [收起 0-44 | 关闭 48-92 | 刷新 96-140 | 收藏 144-188 | 更多 192-236]，右缘镜像。
     private var collapseHitFrame: CGRect {
         switch edge {
         case .left:
@@ -271,7 +283,7 @@ public final class ImmersivePWAExitControl: UIControl {
         case .left:
             return CGRect(x: size + 4, y: 0, width: size, height: size)
         case .right:
-            return CGRect(x: 2 * size, y: 0, width: size, height: size)
+            return CGRect(x: 2 * size + 8, y: 0, width: size, height: size)
         }
     }
 
@@ -280,7 +292,7 @@ public final class ImmersivePWAExitControl: UIControl {
         case .left:
             return CGRect(x: 2 * size + 4, y: 0, width: size, height: size)
         case .right:
-            return CGRect(x: size, y: 0, width: size, height: size)
+            return CGRect(x: size + 4, y: 0, width: size, height: size)
         }
     }
 
@@ -290,6 +302,15 @@ public final class ImmersivePWAExitControl: UIControl {
             return CGRect(x: 3 * size + 8, y: 0, width: size, height: size)
         case .right:
             return CGRect(x: 0, y: 0, width: size, height: size)
+        }
+    }
+
+    private var moreHitFrame: CGRect {
+        switch edge {
+        case .left:
+            return CGRect(x: 4 * size + 12, y: 0, width: size, height: size)
+        case .right:
+            return CGRect(x: expandedWidth - 2 * size, y: 0, width: size, height: size)
         }
     }
 
