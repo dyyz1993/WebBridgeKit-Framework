@@ -165,6 +165,19 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
         XCTAssertEqual(try locator.packageSize(for: installed), packageSize)
     }
 
+    func testReinstallSameVersionRestoresVerifiedResourceManifest() async throws {
+        let fixture = try makeFixture(version: "1")
+        let installer = HTMLAppOfflinePackageInstaller(transport: MemoryTransport(responses: fixture.responses), packagesRoot: root)
+        let first = try await installer.install(appManifest: fixture.parent)
+        let entrypoint = try await installer.entrypointURL(for: first)
+        let descriptor = entrypoint.deletingLastPathComponent().appendingPathComponent(".drel-verified-resource-manifest")
+        try FileManager.default.removeItem(at: descriptor) // simulate an older installed package
+        XCTAssertFalse(FileManager.default.fileExists(atPath: descriptor.path))
+        let second = try await installer.install(appManifest: fixture.parent)
+        XCTAssertEqual(second.directoryName, first.directoryName)
+        XCTAssertEqual(digest(try Data(contentsOf: descriptor)), fixture.parent.cache.resourceManifestSHA256)
+    }
+
     func testInstalledPackageLaunchAndResourcesRemainAvailableAfterNetworkDisconnects() async throws {
         let fixture = try makeFixture(version: "1")
         let transport = MemoryTransport(responses: fixture.responses)

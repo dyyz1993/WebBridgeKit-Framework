@@ -608,6 +608,12 @@ public actor HTMLAppOfflinePackageInstaller {
                 progress(.activating)
                 let versionDirectory = versionsRoot.appendingPathComponent(directoryName, isDirectory: true)
                 if fileManager.fileExists(atPath: versionDirectory.path) {
+                    // A verified same-version reinstall must also upgrade
+                    // packages created before resource metadata was retained.
+                    try manifestResponse.data.write(
+                        to: versionDirectory.appendingPathComponent(".drel-verified-resource-manifest"),
+                        options: .atomic
+                    )
                     try fileManager.removeItem(at: staging)
                 } else {
                     try fileManager.moveItem(at: staging, to: versionDirectory)
