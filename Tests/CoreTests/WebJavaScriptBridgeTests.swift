@@ -4,6 +4,7 @@
 //
 
 import XCTest
+import CryptoKit
 @testable import WebBridgeKit
 
 final class WebJavaScriptBridgeTests: XCTestCase {
@@ -198,6 +199,81 @@ final class WebJavaScriptBridgeTests: XCTestCase {
             XCTAssertEqual(audio?["systemPermission"] as? String, "denied")
             XCTAssertEqual(sensors?["supported"] as? Bool, false)
         }
+    }
+
+    func testOfflineCapabilityQueryMapsOnlyMatchingInstalledEntrypoint() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let otherBytes = Data("<html>second</html>".utf8)
+        let otherDigest = SHA256.hash(data: otherBytes).map { String(format: "%02x", $0) }.joined()
+        let descriptor = HTMLAppOfflinePackageManifest(appID: "com.example.offline-query", version: "7",
+            entrypoint: "index.html", files: [HTMLAppOfflinePackageFile(path: "other.html",
+                url: "https://bridge.example.com/other.html", sha256: otherDigest,
+                size: Int64(otherBytes.count), mimeType: "text/html")])
+        let descriptorBytes = try JSONEncoder().encode(descriptor)
+        let digest = SHA256.hash(data: descriptorBytes).map { String(format: "%02x", $0) }.joined()
+        let manifest = HTMLAppManifest(
+            appID: "com.example.offline-query", name: "Offline",
+            startURL: "https://bridge.example.com/index.html",
+            allowedOrigins: ["https://bridge.example.com"], capabilities: [.share],
+            capabilitiesV2: [HTMLAppActionDeclaration(action: .sensors,
+                origins: ["https://bridge.example.com"], purposeId: "motion", purpose: "Move", scope: .always)],
+            routes: ["/index.html", "/other.html"], cache: HTMLAppCachePolicy(strategy: .manifest, version: "7", persistent: true,
+                resourceManifestURL: "https://bridge.example.com/manifest.json", resourceManifestSHA256: digest))
+        try registry.register(manifest)
+        let stableID = SHA256.hash(data: Data(manifest.appID.utf8)).map { String(format: "%02x", $0) }.joined()
+        let appDir = root.appendingPathComponent(stableID)
+        let dir = appDir.appendingPathComponent("versions/test-v7")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let entrypoint = dir.appendingPathComponent("index.html")
+        try Data("<html></html>".utf8).write(to: entrypoint)
+        let package = InstalledHTMLAppPackage(appID: manifest.appID, version: "7", entrypoint: "index.html",
+            directoryName: "test-v7", resourceManifestSHA256: digest, installedAt: Date())
+        let encoded = try JSONEncoder().encode(package)
+        try encoded.write(to: appDir.appendingPathComponent("current.json"))
+        try encoded.write(to: dir.appendingPathComponent("package.json"))
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let bridge = WebJavaScriptBridge(trustRegistry: registry, permissionLedger: ledger,
+            nativeAuthorizationProvider: NativeAuthorizationProvider(),
+            offlinePackageLocator: HTMLAppOfflinePackageLocator(packagesRoot: root))
+        bridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+        func isDeclared() -> Bool? {
+            var value: Bool?
+            bridge.handle(body: ["action": "getCapabilities"]) { result, _ in
+                let data = (result as? [String: Any])?["data"] as? [String: Any]
+                let actions = data?["actions"] as? [String: Any]
+                value = (actions?["sensors"] as? [String: Any])?["declared"] as? Bool
+            }
+            return value
+        }
+        bridge.updateManagedHTMLAppDocumentURL(entrypoint)
+        XCTAssertEqual(isDeclared(), true)
+        let subject = HTMLAppPermissionSubject(gatewayIdentity: "test-gateway", appID: manifest.appID,
+                                               origin: "https://bridge.example.com")
+        ledger.grant(subject: subject, capability: .motion, scope: .always, actionIdentity: "motion")
+        bridge.userGestureValidationOverride = { true }
+        bridge.nativeHandlers["sensors"] = CallCountingStub()
+        let executed = expectation(description: "offline declared action executes")
+        bridge.handle(body: ["action": "sensors", "params": [:]]) { result, _ in
+            XCTAssertEqual((result as? [String: Any])?["success"] as? Bool, true)
+            executed.fulfill()
+        }
+        wait(for: [executed], timeout: 3)
+        let other = dir.appendingPathComponent("other.html")
+        try otherBytes.write(to: other)
+        bridge.updateManagedHTMLAppDocumentURL(other)
+        XCTAssertEqual(isDeclared(), false) // legacy package lacks verified descriptor
+        try descriptorBytes.write(to: dir.appendingPathComponent(".drel-verified-resource-manifest"))
+        XCTAssertEqual(isDeclared(), true)
+        try Data("tampered".utf8).write(to: other)
+        XCTAssertEqual(isDeclared(), false)
+        bridge.updateManagedHTMLAppDocumentURL(entrypoint)
+        let wrongPackage = InstalledHTMLAppPackage(appID: manifest.appID, version: "8", entrypoint: "index.html",
+            directoryName: "test-v7", resourceManifestSHA256: digest, installedAt: package.installedAt)
+        try JSONEncoder().encode(wrongPackage).write(to: appDir.appendingPathComponent("current.json"))
+        XCTAssertEqual(isDeclared(), false)
     }
 
     // MARK: - Initialization
