@@ -47,6 +47,8 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     var userGestureValidationOverride: (() -> Bool)?
     private var managedAppID: String?
     private var managedDocumentURL: URL?
+    private var managedLaunchPageURL: URL?
+    private let offlinePackageLocator: HTMLAppOfflinePackageLocator
     public weak var permissionConsentPresenter: HTMLAppPermissionConsentPresenting?
     private let trustRegistry: HTMLAppTrustRegistry
     private let permissionLedger: HTMLAppPermissionLedger
@@ -86,7 +88,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
 
     private func cancelManagedGatewayRequests() {
         guard let appID = managedAppID,
-              let url = managedDocumentURL ?? webView?.url,
+              let url = effectiveManagedDocumentURL(webView?.url ?? managedDocumentURL),
               let origin = HTMLAppOrigin.canonicalOrigin(forDocumentURL: url),
               let subject = permissionSubject(appID: appID, origin: origin) else { return }
         capabilityGateway.cancelPendingRequests(subject: subject)
@@ -198,12 +200,14 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         trustRegistry: HTMLAppTrustRegistry,
         permissionLedger: HTMLAppPermissionLedger,
         nativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding,
-        gatewayIdentity: String? = "test-gateway"
+        gatewayIdentity: String? = "test-gateway",
+        offlinePackageLocator: HTMLAppOfflinePackageLocator = HTMLAppOfflinePackageLocator()
     ) {
         self.trustRegistry = trustRegistry
         self.permissionLedger = permissionLedger
         self.nativeAuthorizationProvider = nativeAuthorizationProvider
         self.gatewayIdentity = gatewayIdentity
+        self.offlinePackageLocator = offlinePackageLocator
         capabilityGateway = HTMLAppCapabilityGateway(
             trustRegistry: trustRegistry,
             permissionLedger: permissionLedger,
@@ -273,23 +277,27 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         }
         managedAppID = appID
         managedDocumentURL = documentURL
+        managedLaunchPageURL = documentURL
     }
 
     public func updateManagedHTMLAppDocumentURL(_ documentURL: URL?) {
+        let launchPageURL = managedLaunchPageURL
         configureManagedHTMLApp(appID: managedAppID, documentURL: documentURL)
+        managedLaunchPageURL = launchPageURL
     }
 
     public func endManagedHTMLAppSession() {
         endManagedHTMLAppSession(appID: managedAppID, documentURL: managedDocumentURL ?? webView?.url)
         managedAppID = nil
         managedDocumentURL = nil
+        managedLaunchPageURL = nil
     }
 
     private func endManagedHTMLAppSession(appID: String?, documentURL: URL?) {
         stopAudioForSessionEnd()
         guard let appID else { return }
         cancelPendingAuthorizations(appID: appID)
-        guard let documentURL,
+        guard let documentURL = effectiveManagedDocumentURL(documentURL),
               let origin = HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL) else { return }
         guard let subject = permissionSubject(appID: appID, origin: origin) else { return }
         permissionLedger.revokeSessionGrants(subject: subject)
@@ -301,7 +309,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
               revocation.appID == managedAppID else {
             return
         }
-        let documentURL = webView?.url ?? managedDocumentURL
+        let documentURL = effectiveManagedDocumentURL(webView?.url ?? managedDocumentURL)
         guard let documentURL,
               HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL) == revocation.origin else {
             return
@@ -371,8 +379,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         let callbackId = body["callbackId"] as? String ?? body["messageId"] as? String
         WBKGateTrace.log("handle action=\(action) cb=\(callbackId ?? "-") self=\(ObjectIdentifier(self))")
 
-        // This read-only query never enters the authorization flow, consumes a
-        // gesture, creates pending requests, or presents permission UI.
+        // Read-only: no authorization flow, gesture consumption or permission UI.
         if action == "getCapabilities" {
             completion(WebBridgeResponse.success(data: capabilitySnapshot()).toDictionary(), callbackId)
             return
@@ -465,12 +472,16 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
+    private func effectiveManagedDocumentURL(_ current: URL?) -> URL? {
+        guard let current, current.isFileURL else { return current }
+        guard let appID = managedAppID, let manifest = trustRegistry.manifest(for: appID) else { return nil }
+        return offlinePackageLocator.logicalDocumentURL(for: current, parent: manifest, launchPage: managedLaunchPageURL)
+    }
+
     /// Reports only the current document's signed declarations and grants.
     /// This is a snapshot, not a promise that a later action will succeed.
     private func capabilitySnapshot() -> [String: Any] {
-        // A non-HTTP current document must not inherit the previous page's
-        // identity. Until offline identity mapping is available, fail closed.
-        let documentURL = webView?.url ?? managedDocumentURL
+        let documentURL = effectiveManagedDocumentURL(webView?.url ?? managedDocumentURL)
         let origin = documentURL.flatMap { HTMLAppOrigin.canonicalOrigin(forDocumentURL: $0) }
         let manifest = managedAppID.flatMap { trustRegistry.manifest(for: $0) }
         let subject = managedAppID.flatMap { id in origin.flatMap { permissionSubject(appID: id, origin: $0) } }
@@ -498,13 +509,8 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
                 appPermission = "unavailable"
                 systemPermission = "unavailable"
             }
-            var info: [String: Any] = [
-                "supported": supported,
-                "declared": declared,
-                "appPermission": appPermission,
-                "systemPermission": systemPermission,
-                "requiresUserGesture": true
-            ]
+            var info: [String: Any] = ["supported": supported, "declared": declared, "appPermission": appPermission,
+                                       "systemPermission": systemPermission, "requiresUserGesture": true]
             if let scope { info["grantScope"] = scope }
             actions[action.rawValue] = info
         }
@@ -526,14 +532,13 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             return
         }
         WBKGateTrace.log("policy cap=\(capability.rawValue) managedAppID=\(managedAppID ?? "nil")")
-        let liveURL = webView?.url.flatMap {
-            HTMLAppOrigin.canonicalOrigin(forDocumentURL: $0) == nil ? nil : $0
-        }
+        let currentURL = webView?.url ?? managedDocumentURL
+        let liveURL = effectiveManagedDocumentURL(currentURL)
         // 分层信任模型：
         // 层级 3（网关注册应用）：managedAppID + 签名 manifest → 完整判定链
         // 层级 2（本地信任）：无网关注册 → origin 即身份 → 跳过 manifest 校验，
         //                     直接走授权面板（和浏览器权限弹窗同语义）
-        let documentURL = liveURL ?? managedDocumentURL
+        let documentURL = liveURL
         guard let documentURL, let origin = HTMLAppOrigin.canonicalOrigin(forDocumentURL: documentURL) else {
             completion(.denied(Self.authorizationError(
                 capability: capability,

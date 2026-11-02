@@ -389,6 +389,50 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
         return packageRoot(for: package).appendingPathComponent(package.entrypoint)
     }
 
+    /// Maps a verified active offline package to its native-selected identity.
+    public func logicalDocumentURL(for current: URL, parent: HTMLAppManifest, launchPage: URL?) -> URL? {
+        guard current.isFileURL, let launchPage, parent.allows(documentURL: launchPage),
+              parent.effectiveOfflineCache.isStrongOfflineEligible,
+              let package = try? installedPackage(appID: parent.appID),
+              package.version == parent.effectiveOfflineCache.version,
+              package.resourceManifestSHA256 == parent.effectiveOfflineCache.resourceManifestSHA256,
+              let entrypoint = try? entrypointURL(for: package) else { return nil }
+        if current.standardizedFileURL.resolvingSymlinksInPath().path ==
+            entrypoint.standardizedFileURL.resolvingSymlinksInPath().path {
+            return launchPage
+        }
+        return verifiedDocumentURL(for: current, package: package, parent: parent)
+    }
+
+    /// Resolve additional offline documents only through the digest-pinned
+    /// resource manifest retained at installation. Legacy packages may lack it.
+    public func verifiedDocumentURL(for fileURL: URL, package: InstalledHTMLAppPackage,
+                                    parent: HTMLAppManifest) -> URL? {
+        guard fileURL.isFileURL, let current = try? installedPackage(appID: package.appID), current == package else { return nil }
+        let root = packageRoot(for: package)
+        let descriptorURL = root.appendingPathComponent(".drel-verified-resource-manifest")
+        guard let data = try? Data(contentsOf: descriptorURL), data.count <= 4_194_304,
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == package.resourceManifestSHA256,
+              let descriptor = try? JSONDecoder().decode(HTMLAppOfflinePackageManifest.self, from: data),
+              descriptor.schemaVersion == HTMLAppOfflinePackageManifest.supportedSchemaVersion,
+              descriptor.appID == package.appID, descriptor.version == package.version,
+              descriptor.entrypoint == package.entrypoint else { return nil }
+        let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        let actual = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
+        guard actual.hasPrefix(rootPath) else { return nil }
+        for file in descriptor.files where HTMLAppOfflinePackageInstaller.isSafeRelativePath(file.path) {
+            let candidate = root.appendingPathComponent(file.path).standardizedFileURL.resolvingSymlinksInPath().path
+            guard candidate == actual, file.size >= 0, file.size <= 33_554_432,
+                  let attributes = try? fileManager.attributesOfItem(atPath: actual),
+                  (attributes[.size] as? NSNumber)?.int64Value == file.size,
+                  let bytes = try? Data(contentsOf: URL(fileURLWithPath: actual)),
+                  SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined() == file.sha256,
+                  let original = URL(string: file.url), parent.allows(documentURL: original) else { continue }
+            return original
+        }
+        return nil
+    }
+
     /// Returns the byte size of the active, validated package. The value is
     /// derived from its files instead of untrusted manifest metadata so UI can
     /// report the actual disk footprint after an atomic install.
@@ -558,6 +602,7 @@ public actor HTMLAppOfflinePackageInstaller {
                     resourceManifestSHA256: Self.sha256(manifestResponse.data),
                     installedAt: now()
                 )
+                try manifestResponse.data.write(to: staging.appendingPathComponent(".drel-verified-resource-manifest"), options: .atomic)
                 try writeMetadata(installed, to: staging.appendingPathComponent("package.json"))
 
                 progress(.activating)
@@ -631,7 +676,9 @@ public actor HTMLAppOfflinePackageInstaller {
         var paths = Set<String>()
         var totalBytes: Int64 = 0
         for file in package.files {
-            guard Self.isSafeRelativePath(file.path) else {
+            guard Self.isSafeRelativePath(file.path),
+                  file.path != ".drel-verified-resource-manifest",
+                  !file.path.hasPrefix(".drel-verified-resource-manifest/") else {
                 throw HTMLAppOfflinePackageError.invalidPath(file.path)
             }
             guard paths.insert(file.path).inserted else {
