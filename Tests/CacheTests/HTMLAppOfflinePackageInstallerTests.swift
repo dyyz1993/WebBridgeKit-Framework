@@ -152,6 +152,10 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
 
         XCTAssertEqual(installed.version, "1")
         XCTAssertEqual(try String(contentsOf: entrypoint), "<html>v1</html>")
+        let descriptor = try Data(contentsOf: entrypoint.deletingLastPathComponent()
+            .appendingPathComponent(".drel-verified-resource-manifest"))
+        XCTAssertEqual(digest(descriptor), fixture.parent.cache.resourceManifestSHA256)
+        XCTAssertEqual(try JSONDecoder().decode(HTMLAppOfflinePackageManifest.self, from: descriptor), fixture.package)
         XCTAssertTrue(entrypoint.path.contains("Application Support") == false)
         let restored = try await installer.installedPackage(appID: fixture.parent.appID)
         XCTAssertEqual(restored, installed)
