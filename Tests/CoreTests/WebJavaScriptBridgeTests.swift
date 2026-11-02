@@ -119,6 +119,87 @@ final class WebJavaScriptBridgeTests: XCTestCase {
         super.tearDown()
     }
 
+    func testCapabilityQueryIsReadOnlyAndTracksDeclarationAndRevocation() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .sensors, scope: .always)
+        let ledger = HTMLAppPermissionLedger(storage: storage)
+        let provider = NativeAuthorizationProvider()
+        let managedBridge = WebJavaScriptBridge(trustRegistry: registry, permissionLedger: ledger,
+                                               nativeAuthorizationProvider: provider)
+        let presenter = ConsentPresenter()
+        managedBridge.permissionConsentPresenter = presenter
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+        let subject = HTMLAppPermissionSubject(gatewayIdentity: "test-gateway", appID: manifest.appID,
+                                               origin: "https://bridge.example.com")
+        func snapshot() throws -> [String: Any] {
+            var answer: [String: Any]?
+            managedBridge.handle(body: ["action": "getCapabilities", "callbackId": "query"]) { result, callback in
+                XCTAssertEqual(callback, "query")
+                answer = result as? [String: Any]
+            }
+            let data = try XCTUnwrap(answer?["data"] as? [String: Any])
+            XCTAssertEqual(data["schemaVersion"] as? String, "1")
+            return try XCTUnwrap(data["actions"] as? [String: Any])
+        }
+        let before = try XCTUnwrap(try snapshot()["sensors"] as? [String: Any])
+        XCTAssertEqual(before["declared"] as? Bool, true)
+        XCTAssertEqual(before["appPermission"] as? String, "notDetermined")
+        XCTAssertEqual(before["systemPermission"] as? String, "notRequired")
+        let unlisted = try XCTUnwrap(try snapshot()["audioLevel"] as? [String: Any])
+        XCTAssertEqual(unlisted["declared"] as? Bool, false)
+        ledger.grant(subject: subject, capability: .motion, scope: .always, actionIdentity: "v2-purpose")
+        let granted = try XCTUnwrap(try snapshot()["sensors"] as? [String: Any])
+        XCTAssertEqual(granted["appPermission"] as? String, "granted")
+        ledger.revoke(subject: subject, capability: .motion)
+        let revoked = try XCTUnwrap(try snapshot()["sensors"] as? [String: Any])
+        XCTAssertEqual(revoked["appPermission"] as? String, "notDetermined")
+        XCTAssertEqual(presenter.requestCount, 0)
+    }
+
+    func testCapabilityQueryNeverGrantsAnotherOrigin() throws {
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .audioLevel, scope: .always)
+        let managedBridge = WebJavaScriptBridge(trustRegistry: registry,
+                                               permissionLedger: HTMLAppPermissionLedger(storage: storage),
+                                               nativeAuthorizationProvider: NativeAuthorizationProvider())
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: "https://other.example/index.html"))
+        managedBridge.handle(body: ["action": "getCapabilities"]) { result, _ in
+            let data = (result as? [String: Any])?["data"] as? [String: Any]
+            let actions = data?["actions"] as? [String: Any]
+            let audio = actions?["audioLevel"] as? [String: Any]
+            XCTAssertEqual(audio?["declared"] as? Bool, false)
+            XCTAssertEqual(audio?["appPermission"] as? String, "unavailable")
+        }
+    }
+
+    func testCapabilityQuerySeparatesHostAndSystemPermission() throws {
+        let previous = WebBridgeHostCapabilityPolicy.nativeActionAllowlist
+        defer { WebBridgeHostCapabilityPolicy.nativeActionAllowlist = previous }
+        WebBridgeHostCapabilityPolicy.nativeActionAllowlist = ["getCapabilities", "audioLevel"]
+        let storage = MemoryStorage()
+        let registry = HTMLAppTrustRegistry(storage: storage)
+        let manifest = try registerV2Manifest(in: registry, action: .audioLevel, scope: .always)
+        let provider = NativeAuthorizationProvider()
+        provider.status = .denied
+        let managedBridge = WebJavaScriptBridge(trustRegistry: registry,
+                                               permissionLedger: HTMLAppPermissionLedger(storage: storage),
+                                               nativeAuthorizationProvider: provider)
+        managedBridge.configureManagedHTMLApp(appID: manifest.appID, documentURL: URL(string: manifest.startURL))
+        managedBridge.handle(body: ["action": "getCapabilities"]) { result, _ in
+            let data = (result as? [String: Any])?["data"] as? [String: Any]
+            let actions = data?["actions"] as? [String: Any]
+            let audio = actions?["audioLevel"] as? [String: Any]
+            let sensors = actions?["sensors"] as? [String: Any]
+            XCTAssertEqual(audio?["supported"] as? Bool, true)
+            XCTAssertEqual(audio?["declared"] as? Bool, true)
+            XCTAssertEqual(audio?["appPermission"] as? String, "notDetermined")
+            XCTAssertEqual(audio?["systemPermission"] as? String, "denied")
+            XCTAssertEqual(sensors?["supported"] as? Bool, false)
+        }
+    }
+
     // MARK: - Initialization
 
     func testInitializationRegistersHandlerFactories() {

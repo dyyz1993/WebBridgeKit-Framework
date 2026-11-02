@@ -50,6 +50,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     public weak var permissionConsentPresenter: HTMLAppPermissionConsentPresenting?
     private let trustRegistry: HTMLAppTrustRegistry
     private let permissionLedger: HTMLAppPermissionLedger
+    private let nativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding
     private let capabilityGateway: HTMLAppCapabilityGateway
     private let gatewayIdentity: String?
     private struct PendingAuthorization {
@@ -109,6 +110,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     private static let ALLOWED_COMMANDS: Set<String> = [
         // 基础功能
         "share",
+        "getCapabilities",
         "getLocation",
         "requestPermission",
         // 系统信息
@@ -200,6 +202,7 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     ) {
         self.trustRegistry = trustRegistry
         self.permissionLedger = permissionLedger
+        self.nativeAuthorizationProvider = nativeAuthorizationProvider
         self.gatewayIdentity = gatewayIdentity
         capabilityGateway = HTMLAppCapabilityGateway(
             trustRegistry: trustRegistry,
@@ -368,6 +371,13 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         let callbackId = body["callbackId"] as? String ?? body["messageId"] as? String
         WBKGateTrace.log("handle action=\(action) cb=\(callbackId ?? "-") self=\(ObjectIdentifier(self))")
 
+        // This read-only query never enters the authorization flow, consumes a
+        // gesture, creates pending requests, or presents permission UI.
+        if action == "getCapabilities" {
+            completion(WebBridgeResponse.success(data: capabilitySnapshot()).toDictionary(), callbackId)
+            return
+        }
+
         // 创建命令跟踪条目
         let trace = CommandTraceEntry(
             action: action,
@@ -453,6 +463,52 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
                 completion(result, callbackId)
             }
         }
+    }
+
+    /// Reports only the current document's signed declarations and grants.
+    /// This is a snapshot, not a promise that a later action will succeed.
+    private func capabilitySnapshot() -> [String: Any] {
+        // A non-HTTP current document must not inherit the previous page's
+        // identity. Until offline identity mapping is available, fail closed.
+        let documentURL = webView?.url ?? managedDocumentURL
+        let origin = documentURL.flatMap { HTMLAppOrigin.canonicalOrigin(forDocumentURL: $0) }
+        let manifest = managedAppID.flatMap { trustRegistry.manifest(for: $0) }
+        let subject = managedAppID.flatMap { id in origin.flatMap { permissionSubject(appID: id, origin: $0) } }
+        let pageAllowed = documentURL.map { manifest?.allows(documentURL: $0) == true } ?? false
+        var actions: [String: Any] = [:]
+        for action in HTMLAppControlledAction.allCases {
+            let supported = WebBridgeHostCapabilityPolicy.nativeActionAllowlist?.contains(action.rawValue) ?? true
+            let declaration = origin.flatMap { manifest?.declaration(for: action, origin: $0) }
+            let declared = pageAllowed && declaration != nil && subject != nil
+            let requiresGrant = HTMLAppBridgeCapabilityPolicy.isGrantBasedAction(action)
+            var appPermission = requiresGrant ? "notDetermined" : "notRequired"
+            var systemPermission = "notRequired"
+            var scope: String?
+            if declared && supported && requiresGrant, let declaration, let subject {
+                let capability = HTMLAppBridgeCapabilityPolicy.capability(for: action)
+                if let grant = permissionLedger.grant(for: subject, capability: capability, actionIdentity: declaration.purposeId),
+                   grant.scope == .always {
+                    appPermission = "granted"
+                    scope = grant.scope.rawValue
+                }
+                if action == .getLocation || action == .audioLevel {
+                    systemPermission = nativeAuthorizationProvider.authorizationStatus(for: capability).rawValue
+                }
+            } else if !declared || !supported {
+                appPermission = "unavailable"
+                systemPermission = "unavailable"
+            }
+            var info: [String: Any] = [
+                "supported": supported,
+                "declared": declared,
+                "appPermission": appPermission,
+                "systemPermission": systemPermission,
+                "requiresUserGesture": true
+            ]
+            if let scope { info["grantScope"] = scope }
+            actions[action.rawValue] = info
+        }
+        return ["schemaVersion": "1", "actions": actions]
     }
 
     private enum AuthorizationDecision {
