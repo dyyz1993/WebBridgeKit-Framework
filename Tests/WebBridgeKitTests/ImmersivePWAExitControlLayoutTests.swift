@@ -22,4 +22,24 @@ final class ImmersivePWAExitControlLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(arrowFrame.minX, -0.5)
         XCTAssertLessThanOrEqual(arrowFrame.maxX, control.frame.maxX + 0.5)
     }
+
+    func testShowingMoreMenuReplacesStaleSheet() throws {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let items = [
+            ImmersiveFunctionSheet.Item(
+                title: "复制链接",
+                subtitle: "复制当前页面地址",
+                symbol: .link,
+                action: {}
+            )
+        ]
+
+        ImmersiveFunctionSheet.show(in: host, items: items)
+        let first = try XCTUnwrap(host.subviews.first(where: { $0 is ImmersiveFunctionSheet }))
+        ImmersiveFunctionSheet.show(in: host, items: items)
+        let sheets = host.subviews.compactMap { $0 as? ImmersiveFunctionSheet }
+
+        XCTAssertEqual(sheets.count, 1)
+        XCTAssertFalse(first === sheets[0])
+    }
 }

@@ -21,7 +21,7 @@ extension WebBrowserViewController {
                 presenter(self)
             })
         }
-        if let url = webView.url, url.scheme == "https" || url.scheme == "http" {
+        if let url = copyablePageURL {
             items.append(.init(title: "复制链接", subtitle: "复制当前页面地址", symbol: .link) {
                 UIPasteboard.general.string = url.absoluteString
                 HUDService.shared.showSuccess(withStatus: "链接已复制")

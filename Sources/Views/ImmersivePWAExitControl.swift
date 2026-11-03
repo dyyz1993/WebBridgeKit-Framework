@@ -19,7 +19,12 @@ final class ImmersiveFunctionSheet: UIView {
     private var items: [Item] = []
 
     static func show(in host: UIView, items: [Item]) {
-        guard !items.isEmpty, !host.subviews.contains(where: { $0 is ImmersiveFunctionSheet }) else { return }
+        guard !items.isEmpty else { return }
+        // A sheet can outlive a failed dismissal when the browser hierarchy is
+        // replaced during a blank/error-page transition. Never let that stale
+        // view swallow the next More tap.
+        host.subviews.compactMap { $0 as? ImmersiveFunctionSheet }
+            .forEach { $0.removeFromSuperview() }
         let sheet = ImmersiveFunctionSheet(frame: host.bounds)
         sheet.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         sheet.items = items
