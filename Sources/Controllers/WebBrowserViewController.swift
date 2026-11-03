@@ -562,12 +562,29 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
     /// Internal so the … menu favorite item shares this exact entry
     /// semantics instead of persisting the raw page URL.
     var favoriteEntryURL: URL? {
-        guard let url = webView.url else { return nil }
-        if url.scheme == "https" || url.scheme == "http" { return url }
+        if let url = webView.url, url.scheme == "https" || url.scheme == "http" {
+            return url
+        }
+        if let url = currentURL, url.scheme == "https" || url.scheme == "http" {
+            return url
+        }
+        if let url = viewModel.initialURL, url.scheme == "https" || url.scheme == "http" {
+            return url
+        }
+        if let url = viewModel.managedHTMLAppDocumentURL,
+           url.scheme == "https" || url.scheme == "http" {
+            return url
+        }
         guard let appID = viewModel.managedHTMLAppID,
               let startURL = HTMLAppRuntimeCenter.shared.trustRegistry.manifest(for: appID)?.startURL,
               let entry = URL(string: startURL) else { return nil }
         return entry
+    }
+
+    /// Copy the logical page link even while WebKit is still presenting a
+    /// blank or failed document and has not populated `webView.url`.
+    var copyablePageURL: URL? {
+        favoriteEntryURL
     }
 
     func toggleImmersiveFavorite() {
