@@ -70,6 +70,8 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     private var immersiveHistoryBackEdgeView: UIView?
     private var managedHTMLAppID: String?
     private var managedHTMLAppDocumentURL: URL?
+    var hasAttemptedOfflinePackageFallback = false
+    var isRecoveringFromOfflinePackageFallback = false
 
     //  浏览器特性控制（默认全部禁用，通过 Bridge 按需开启）
     var bouncesEnabled = false
