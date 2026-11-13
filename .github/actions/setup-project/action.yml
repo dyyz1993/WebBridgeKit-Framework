@@ -20,8 +20,8 @@ runs:
       run: |
         command -v xcodegen || brew install xcodegen
         command -v swiftlint || brew install swiftlint
-        command -v pod >/dev/null || sudo gem install cocoapods --no-document
-        command -v xcpretty >/dev/null || sudo gem install xcpretty --no-document
+        gem install cocoapods xcpretty --user-install --no-document
+        echo "$(ruby -e 'puts File.join(Gem.user_dir, "bin")')" >> "$GITHUB_PATH"
 
     - name: Cache CocoaPods
       uses: actions/cache@v4
@@ -31,11 +31,12 @@ runs:
         restore-keys: pods-${{ runner.os }}-
 
     - name: Cache DerivedData
+      if: false
       uses: actions/cache@v4
       with:
         path: ~/Library/Developer/Xcode/DerivedData
-        key: derived-${{ runner.os }}-xcode16.4-${{ hashFiles('Podfile.lock', 'project.yml') }}
-        restore-keys: derived-${{ runner.os }}-xcode16.4-
+        key: derived-${{ runner.os }}-xcode27.2-${{ hashFiles('Podfile.lock', 'project.yml') }}
+        restore-keys: derived-${{ runner.os }}-xcode27.2-
 
     - name: Generate & Install
       shell: bash
