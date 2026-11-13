@@ -163,6 +163,63 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
         let packageSize = try locator.packageSize(for: installed)
         XCTAssertGreaterThan(packageSize, Int64("<html>v1</html>".utf8.count))
         XCTAssertEqual(try locator.packageSize(for: installed), packageSize)
+
+        let appRoot = root.appendingPathComponent(
+            SHA256.hash(data: Data(fixture.parent.appID.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+        )
+        let metadata = try JSONDecoder().decode(
+            InstalledHTMLAppPackage.self,
+            from: Data(contentsOf: appRoot.appendingPathComponent("installed.json"))
+        )
+        XCTAssertEqual(metadata, installed)
+    }
+
+    func testLegacyMetadataPackageRepairsOverwrittenResourceManifest() async throws {
+        let fixture = try makeFixture(version: "1")
+        let installer = HTMLAppOfflinePackageInstaller(transport: MemoryTransport(responses: fixture.responses), packagesRoot: root)
+        let installed = try await installer.install(appManifest: fixture.parent)
+        let entrypoint = try await installer.entrypointURL(for: installed)
+        let packageRoot = entrypoint.deletingLastPathComponent()
+        let appRoot = root.appendingPathComponent(
+            SHA256.hash(data: Data(fixture.parent.appID.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+        )
+        try FileManager.default.removeItem(at: appRoot.appendingPathComponent("installed.json"))
+        try JSONEncoder().encode(installed).write(
+            to: packageRoot.appendingPathComponent("package.json"),
+            options: .atomic
+        )
+
+        let restored = try await installer.installedPackage(appID: fixture.parent.appID)
+        XCTAssertEqual(restored, installed)
+        XCTAssertEqual(
+            digest(try Data(contentsOf: packageRoot.appendingPathComponent("package.json"))),
+            fixture.parent.cache.resourceManifestSHA256
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                InstalledHTMLAppPackage.self,
+                from: Data(contentsOf: appRoot.appendingPathComponent("installed.json"))
+            ),
+            installed
+        )
+    }
+
+    func testLocatorAcceptsVerifiedResourceDescriptorWithoutLegacyManifest() async throws {
+        let fixture = try makeFixture(version: "1")
+        let installer = HTMLAppOfflinePackageInstaller(transport: MemoryTransport(responses: fixture.responses), packagesRoot: root)
+        let installed = try await installer.install(appManifest: fixture.parent)
+        let packageRoot = try await installer.entrypointURL(for: installed).deletingLastPathComponent()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: packageRoot.appendingPathComponent("package.json").path))
+
+        let restored = try await installer.installedPackage(appID: fixture.parent.appID)
+        XCTAssertEqual(restored, installed)
+        let restoredEntrypoint = try await installer.entrypointURL(for: installed)
+        XCTAssertEqual(
+            try String(contentsOf: restoredEntrypoint),
+            "<html>v1</html>"
+        )
     }
 
     func testReinstallSameVersionRestoresVerifiedResourceManifest() async throws {

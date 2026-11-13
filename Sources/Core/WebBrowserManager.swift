@@ -98,6 +98,10 @@ public class WebBrowserManager: WebBrowserManaging {
     public static let sessionRestoreWindow: TimeInterval = 300
 
     func persistLastSession(url: URL) {
+        guard !url.isFileURL else {
+            clearLastSession()
+            return
+        }
         UserDefaults.standard.set(url.absoluteString, forKey: Self.lastBrowserURLKey)
         UserDefaults.standard.set(Date(), forKey: Self.lastBrowserAtKey)
     }
@@ -119,6 +123,7 @@ public class WebBrowserManager: WebBrowserManaging {
     public static func restorableLastURL() -> URL? {
         guard let raw = UserDefaults.standard.string(forKey: lastBrowserURLKey),
               let url = URL(string: raw),
+              !url.isFileURL,
               let at = UserDefaults.standard.object(forKey: lastBrowserAtKey) as? Date,
               Date().timeIntervalSince(at) <= sessionRestoreWindow else { return nil }
         return url
