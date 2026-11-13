@@ -111,9 +111,6 @@ jobs:
             build/AppTemplateBuildResults.xcresult
           retention-days: 7
 
-<<<<<<< HEAD
-=======
->>>>>>> 8896531 (ci: tolerate artifact quota failures)
   # ─── Job 3-5: Unit Tests (3 groups, was 11 individual) ─────────
   unit-tests:
     name: Unit Tests (${{ matrix.group.name }})
