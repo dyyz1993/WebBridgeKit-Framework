@@ -31,6 +31,7 @@ runs:
         restore-keys: pods-${{ runner.os }}-
 
     - name: Cache DerivedData
+      if: false
       uses: actions/cache@v4
       with:
         path: ~/Library/Developer/Xcode/DerivedData
