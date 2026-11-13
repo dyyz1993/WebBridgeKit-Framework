@@ -17,7 +17,7 @@ concurrency:
 
 env:
   CI_START_TIME: ${{ github.event.head_commit.timestamp }}
-  XCODE_VERSION: '16.4'
+  XCODE_VERSION: '27.2'
 
 jobs:
   # ─── Job 1: SwiftLint ───────────────────────────────────────────
