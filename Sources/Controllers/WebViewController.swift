@@ -69,7 +69,7 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     private var immersiveHistoryBackGesture: UIPanGestureRecognizer?
     private var immersiveHistoryBackEdgeView: UIView?
     private var managedHTMLAppID: String?
-    private var managedHTMLAppDocumentURL: URL?
+    var managedHTMLAppDocumentURL: URL?
     var hasAttemptedOfflinePackageFallback = false
     var isRecoveringFromOfflinePackageFallback = false
 
