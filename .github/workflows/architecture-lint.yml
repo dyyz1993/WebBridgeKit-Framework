@@ -19,7 +19,7 @@ permissions:
 jobs:
   architecture-lint:
     name: Architecture Lint
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
