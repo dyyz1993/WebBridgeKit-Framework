@@ -104,6 +104,7 @@ extension WebViewController {
             StructuredLogger.shared.error("   - Error: \(error.localizedDescription)", category: .ui)
         }
         #endif
+        recoverFromFailedOfflinePackage(error)
     }
 
     /// 页面内容加载失败
@@ -120,5 +121,30 @@ extension WebViewController {
             StructuredLogger.shared.error("   - Error: \(error.localizedDescription)", category: .ui)
         }
         #endif
+        recoverFromFailedOfflinePackage(error)
+    }
+
+    /// A verified strong-offline package must never become a dead end. If its
+    /// local file navigation fails, fall back once to the manifest's online
+    /// start URL while retaining the same immersive configuration.
+    private func recoverFromFailedOfflinePackage(_ error: Error) {
+        guard !hasAttemptedOfflinePackageFallback,
+              !isRecoveringFromOfflinePackageFallback,
+              let managedPageURL = managedHTMLAppDocumentURL,
+              managedPageURL.scheme == "https",
+              webView.url?.isFileURL == true else {
+            return
+        }
+
+        hasAttemptedOfflinePackageFallback = true
+        isRecoveringFromOfflinePackageFallback = true
+        StructuredLogger.shared.warning(
+            "[WARN] [OfflinePackage] Local entrypoint failed (\(error.localizedDescription)); falling back to \(managedPageURL.absoluteString)",
+            category: .navigation
+        )
+
+        webView.stopLoading()
+        let request = URLRequest(url: managedPageURL, timeoutInterval: 30)
+        webView.load(request)
     }
 }
