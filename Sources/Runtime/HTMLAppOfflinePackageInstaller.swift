@@ -347,6 +347,9 @@ extension URLSessionHTMLAppPackageTransport: URLSessionDownloadDelegate {
 public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
     private let packagesRoot: URL
     private let fileManager: FileManager
+    private static let metadataFilename = "installed.json"
+    private static let legacyResourceManifestFilename = "package.json"
+    private static let resourceDescriptorFilename = ".drel-verified-resource-manifest"
 
     /// Default on-disk root for downloaded offline packages
     /// (`Application Support/WebBridgeKit/Packages`). Storage accounting
@@ -369,17 +372,23 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
         let appRoot = packagesRoot.appendingPathComponent(Self.stableID(appID), isDirectory: true)
         let pointer = appRoot.appendingPathComponent("current.json")
         guard fileManager.fileExists(atPath: pointer.path) else { return nil }
+
+        let metadataURL = appRoot.appendingPathComponent(Self.metadataFilename)
+        let installed: InstalledHTMLAppPackage
         do {
-            let installed = try JSONDecoder().decode(InstalledHTMLAppPackage.self, from: Data(contentsOf: pointer))
-            guard installed.appID == appID else { return nil }
-            let packageRoot = appRoot.appendingPathComponent("versions/\(installed.directoryName)", isDirectory: true)
-            let entrypoint = packageRoot.appendingPathComponent(installed.entrypoint)
-            guard fileManager.fileExists(atPath: packageRoot.appendingPathComponent("package.json").path),
-                  fileManager.fileExists(atPath: entrypoint.path) else { return nil }
-            return installed
+            let source = fileManager.fileExists(atPath: metadataURL.path) ? metadataURL : pointer
+            installed = try JSONDecoder().decode(InstalledHTMLAppPackage.self, from: Data(contentsOf: source))
         } catch {
             throw HTMLAppOfflinePackageError.persistenceFailed
         }
+        guard installed.appID == appID else { return nil }
+
+        do {
+            try migrateLegacyMetadata(installed, appRoot: appRoot)
+        } catch {
+            throw HTMLAppOfflinePackageError.persistenceFailed
+        }
+        return try activePackage(installed, appID: appID, appRoot: appRoot)
     }
 
     public func entrypointURL(for package: InstalledHTMLAppPackage) throws -> URL {
@@ -497,8 +506,74 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
             .appendingPathComponent("versions/\(package.directoryName)", isDirectory: true)
     }
 
+    private func activePackage(
+        _ installed: InstalledHTMLAppPackage,
+        appID: String,
+        appRoot: URL
+    ) throws -> InstalledHTMLAppPackage? {
+        guard installed.appID == appID else { return nil }
+        let packageRoot = appRoot.appendingPathComponent(
+            "versions/\(installed.directoryName)",
+            isDirectory: true
+        )
+        let entrypoint = packageRoot.appendingPathComponent(installed.entrypoint)
+        guard fileManager.fileExists(atPath: entrypoint.path) else { return nil }
+        let descriptorURL = packageRoot.appendingPathComponent(Self.resourceDescriptorFilename)
+        if fileManager.fileExists(atPath: descriptorURL.path) {
+            guard let descriptorData = try? Data(contentsOf: descriptorURL),
+                  Self.sha256(descriptorData) == installed.resourceManifestSHA256 else { return nil }
+        } else {
+            let legacyResourceManifestURL = packageRoot.appendingPathComponent(Self.legacyResourceManifestFilename)
+            guard let data = try? Data(contentsOf: legacyResourceManifestURL),
+                  Self.sha256(data) == installed.resourceManifestSHA256 else { return nil }
+        }
+        return installed
+    }
+
+    private func migrateLegacyMetadata(
+        _ installed: InstalledHTMLAppPackage,
+        appRoot: URL
+    ) throws {
+        let metadataURL = appRoot.appendingPathComponent(Self.metadataFilename)
+        guard !fileManager.fileExists(atPath: metadataURL.path) else { return }
+
+        let packageRoot = appRoot.appendingPathComponent(
+            "versions/\(installed.directoryName)",
+            isDirectory: true
+        )
+        let descriptorURL = packageRoot.appendingPathComponent(
+            Self.resourceDescriptorFilename
+        )
+
+        if fileManager.fileExists(atPath: descriptorURL.path) {
+            let descriptorData = try Data(contentsOf: descriptorURL)
+            let descriptorDigest = Self.sha256(descriptorData)
+            guard descriptorDigest == installed.resourceManifestSHA256 else { return }
+            let descriptor = try JSONDecoder().decode(
+                HTMLAppOfflinePackageManifest.self,
+                from: descriptorData
+            )
+            guard descriptor.appID == installed.appID,
+                  descriptor.version == installed.version,
+                  descriptor.entrypoint == installed.entrypoint else { return }
+
+            try descriptorData.write(
+                to: packageRoot.appendingPathComponent(Self.legacyResourceManifestFilename),
+                options: .atomic
+            )
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(installed).write(to: metadataURL, options: .atomic)
+    }
+
     private static func stableID(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -603,7 +678,6 @@ public actor HTMLAppOfflinePackageInstaller {
                     installedAt: now()
                 )
                 try manifestResponse.data.write(to: staging.appendingPathComponent(".drel-verified-resource-manifest"), options: .atomic)
-                try writeMetadata(installed, to: staging.appendingPathComponent("package.json"))
 
                 progress(.activating)
                 let versionDirectory = versionsRoot.appendingPathComponent(directoryName, isDirectory: true)
@@ -619,6 +693,7 @@ public actor HTMLAppOfflinePackageInstaller {
                     try fileManager.moveItem(at: staging, to: versionDirectory)
                 }
                 try writeMetadata(installed, to: appRoot.appendingPathComponent("current.json"))
+                try writeMetadata(installed, to: appRoot.appendingPathComponent("installed.json"))
                 try? excludeFromBackup(appRoot)
                 progress(.completed)
                 return installed
