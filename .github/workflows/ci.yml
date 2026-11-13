@@ -111,15 +111,6 @@ jobs:
             build/AppTemplateBuildResults.xcresult
           retention-days: 7
 
-      - name: Upload DerivedData
-        if: success()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: derived-data
-          path: ~/Library/Developer/Xcode/DerivedData/WebBridgeKit-*/
-          retention-days: 1
-
   # ─── Job 3-5: Unit Tests (3 groups, was 11 individual) ─────────
   unit-tests:
     name: Unit Tests (${{ matrix.group.name }})
@@ -164,12 +155,6 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
-
-      - name: Download DerivedData
-        uses: actions/download-artifact@v4
-        with:
-          name: derived-data
-          path: ~/Library/Developer/Xcode/DerivedData/
 
       - name: Setup Project
         uses: ./.github/actions/setup-project
@@ -347,6 +332,7 @@ jobs:
 
       - name: Upload Test Results
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.group.name }}
@@ -357,6 +343,7 @@ jobs:
 
       - name: Upload Coverage
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.group.name }}
@@ -383,6 +370,7 @@ jobs:
 
       - name: Upload Diagnostics
         if: always() && failure()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: diagnostics-${{ matrix.group.name }}
