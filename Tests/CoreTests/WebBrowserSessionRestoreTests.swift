@@ -20,4 +20,17 @@ final class WebBrowserSessionRestoreTests: XCTestCase {
         manager.persistLastSession(url: url)
         XCTAssertEqual(WebBrowserManager.restorableLastURL(), url)
     }
+
+    func testImmersiveOfflinePackageFallbackRunsOnlyOncePerManagedSession() {
+        let viewModel = WebBrowserViewModel(url: URL(fileURLWithPath: "/tmp/package/index.html"))
+
+        XCTAssertTrue(viewModel.beginOfflinePackageFallback())
+        XCTAssertFalse(viewModel.beginOfflinePackageFallback())
+
+        viewModel.configureManagedHTMLApp(
+            appID: "app.example",
+            documentURL: URL(string: "https://example.test/app")
+        )
+        XCTAssertTrue(viewModel.beginOfflinePackageFallback())
+    }
 }
