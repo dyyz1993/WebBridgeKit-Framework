@@ -370,19 +370,43 @@ extension WebBrowserViewController: WKNavigationDelegate {
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         let nsError = error as NSError
         os_log("PWA navigation failed: %{public}@/%{public}ld", log: OSLog.default, type: .error, nsError.domain, nsError.code)
-        HUDService.shared.showError(withStatus: error.localizedDescription)
+        if webView.url?.isFileURL != true {
+            HUDService.shared.showError(withStatus: error.localizedDescription)
+        }
+        recoverFromFailedOfflinePackage(error)
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let nsError = error as NSError
         os_log("PWA provisional navigation failed: %{public}@/%{public}ld", log: OSLog.default, type: .error, nsError.domain, nsError.code)
-        HUDService.shared.showError(withStatus: error.localizedDescription)
+        if webView.url?.isFileURL != true {
+            HUDService.shared.showError(withStatus: error.localizedDescription)
+        }
+        recoverFromFailedOfflinePackage(error)
     }
 
     public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         os_log("PWA provisional navigation started", log: OSLog.default, type: .info)
         loadStartTime = Date()
         HUDService.shared.show()
+    }
+
+    /// Strong-offline packages opened through the immersive browser must also
+    /// retry their trusted HTTPS page once if the local entrypoint cannot load.
+    private func recoverFromFailedOfflinePackage(_ error: Error) {
+        guard viewModel.beginOfflinePackageFallback(),
+              webView.url?.isFileURL == true,
+              let managedPageURL = viewModel.managedHTMLAppDocumentURL,
+              managedPageURL.scheme == "https" else {
+            return
+        }
+
+        StructuredLogger.shared.warning(
+            "[WARN] [OfflinePackage] Local entrypoint failed (\(error.localizedDescription)); falling back to \(managedPageURL.absoluteString)",
+            category: .navigation
+        )
+        webView.stopLoading()
+        webView.load(URLRequest(url: managedPageURL, timeoutInterval: 30))
     }
 
     /// 加载错误提示页面
