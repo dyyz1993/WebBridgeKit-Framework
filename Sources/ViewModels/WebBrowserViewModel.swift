@@ -49,6 +49,7 @@ public class WebBrowserViewModel: ViewModel {
     public let initialURL: URL?
     public private(set) var managedHTMLAppID: String?
     public private(set) var managedHTMLAppDocumentURL: URL?
+    public private(set) var isRecoveringFromOfflinePackageFallback = false
     public let disposeBag = DisposeBag()
 
     // MARK: - Relay
@@ -192,7 +193,14 @@ public class WebBrowserViewModel: ViewModel {
     public func configureManagedHTMLApp(appID: String?, documentURL: URL?) {
         managedHTMLAppID = appID
         managedHTMLAppDocumentURL = documentURL
+        isRecoveringFromOfflinePackageFallback = false
         jsBridge.configureManagedHTMLApp(appID: appID, documentURL: documentURL)
+    }
+
+    public func beginOfflinePackageFallback() -> Bool {
+        guard !isRecoveringFromOfflinePackageFallback else { return false }
+        isRecoveringFromOfflinePackageFallback = true
+        return true
     }
 
     public func updateManagedHTMLAppDocumentURL(_ documentURL: URL?) {
