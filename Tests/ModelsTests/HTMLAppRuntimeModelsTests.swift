@@ -311,6 +311,37 @@ final class HTMLAppRuntimeModelsTests: XCTestCase {
         XCTAssertEqual(offline?["resource_manifest_sha256"] as? String, digest)
     }
 
+    func testDrelOfflineDeclarationVersionIsOptionalAndInheritsParentVersion() throws {
+        let digest = String(repeating: "a", count: 64)
+        let data = Data("""
+        {
+          "schemaVersion": "1",
+          "appId": "com.example.inventory",
+          "name": "Inventory",
+          "startURL": "https://inventory.example.com/index.html",
+          "allowedOrigins": ["https://inventory.example.com"],
+          "capabilities": [],
+          "routes": ["/"],
+          "cache": { "strategy": "manifest", "version": "42", "persistent": true },
+          "drel_offline": {
+            "resource_manifest": "https://inventory.example.com/offline/package.json",
+            "resource_manifest_sha256": "\(digest)"
+          }
+        }
+        """.utf8)
+
+        let manifest = try JSONDecoder().decode(HTMLAppManifest.self, from: data)
+
+        XCTAssertNil(manifest.drelOffline?.version)
+        XCTAssertEqual(manifest.effectiveOfflineCache.version, "42")
+        XCTAssertTrue(manifest.effectiveOfflineCache.isStrongOfflineEligible)
+        XCTAssertTrue(manifest.validate().isValid)
+
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifest)) as? [String: Any]
+        let offline = object?["drel_offline"] as? [String: Any]
+        XCTAssertNil(offline?["version"])
+    }
+
     func testDrelOfflineDeclarationRejectsConflictWithLegacyStrongPolicy() {
         let digest = String(repeating: "a", count: 64)
         let manifest = HTMLAppManifest(

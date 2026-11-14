@@ -214,12 +214,12 @@ public struct HTMLAppCachePolicy: Codable, Equatable, Sendable {
 /// Web App Manifest consumers ignore this member; Drel maps it onto its
 /// existing signed resource-manifest installer contract.
 public struct DrelOfflinePackageDeclaration: Codable, Equatable, Sendable {
-    public let version: String
+    public let version: String?
     public let resourceManifestURL: String
     public let resourceManifestSHA256: String
 
     public init(
-        version: String,
+        version: String? = nil,
         resourceManifestURL: String,
         resourceManifestSHA256: String
     ) {
@@ -228,10 +228,10 @@ public struct DrelOfflinePackageDeclaration: Codable, Equatable, Sendable {
         self.resourceManifestSHA256 = resourceManifestSHA256
     }
 
-    fileprivate func cachePolicy(restoresLastState: Bool) -> HTMLAppCachePolicy {
+    fileprivate func cachePolicy(version: String, restoresLastState: Bool) -> HTMLAppCachePolicy {
         HTMLAppCachePolicy(
             strategy: .manifest,
-            version: version,
+            version: self.version ?? version,
             persistent: true,
             resourceManifestURL: resourceManifestURL,
             resourceManifestSHA256: resourceManifestSHA256,
@@ -385,7 +385,7 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
     /// launch. Legacy signed manifests keep their existing `cache` contract;
     /// newer manifests may use the namespaced Web Manifest extension instead.
     public var effectiveOfflineCache: HTMLAppCachePolicy {
-        drelOffline?.cachePolicy(restoresLastState: cache.restoresLastState) ?? cache
+        drelOffline?.cachePolicy(version: cache.version, restoresLastState: cache.restoresLastState) ?? cache
     }
 
     public func validate(requiringSignature: Bool = false) -> HTMLAppManifestValidationResult {
@@ -548,7 +548,7 @@ public struct HTMLAppManifest: Codable, Equatable, Sendable {
         guard hasLegacyResourceDeclaration else { return false }
         return cache.strategy != .manifest
             || !cache.persistent
-            || cache.version != drelOffline.version
+            || (drelOffline.version != nil && cache.version != drelOffline.version)
             || cache.resourceManifestURL != drelOffline.resourceManifestURL
             || cache.resourceManifestSHA256 != drelOffline.resourceManifestSHA256
     }
