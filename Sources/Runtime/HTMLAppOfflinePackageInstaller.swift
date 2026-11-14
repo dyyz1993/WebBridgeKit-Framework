@@ -214,7 +214,6 @@ public final class HTMLAppWebManifestAdapter: @unchecked Sendable {
                 relativeTo: manifestURL
             )?.absoluteURL,
             parent.allows(documentURL: resourceURL),
-            !declaration.version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             HTMLAppCachePolicy.isValidSHA256(declaration.resourceManifestSHA256) else {
                 throw HTMLAppWebManifestAdapterError.invalidOfflineDeclaration
             }

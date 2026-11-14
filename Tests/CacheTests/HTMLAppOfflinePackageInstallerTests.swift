@@ -310,6 +310,41 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: entrypoint.path))
     }
 
+    func testInstallsPackageWhenDrelOfflineVersionIsOmitted() async throws {
+        var fixture = try makeFixture(version: "1")
+        let digest = try XCTUnwrap(fixture.parent.cache.resourceManifestSHA256)
+        let resourceManifestURL = try XCTUnwrap(fixture.parent.cache.resourceManifestURL)
+        fixture.parent = HTMLAppManifest(
+            appID: fixture.parent.appID,
+            name: fixture.parent.name,
+            startURL: fixture.parent.startURL,
+            allowedOrigins: fixture.parent.allowedOrigins,
+            capabilities: fixture.parent.capabilities,
+            routes: fixture.parent.routes,
+            cache: HTMLAppCachePolicy(
+                strategy: .manifest,
+                version: fixture.package.version,
+                persistent: true
+            ),
+            drelOffline: DrelOfflinePackageDeclaration(
+                resourceManifestURL: resourceManifestURL,
+                resourceManifestSHA256: digest
+            ),
+            signature: fixture.parent.signature
+        )
+        let installer = HTMLAppOfflinePackageInstaller(
+            transport: MemoryTransport(responses: fixture.responses),
+            packagesRoot: root
+        )
+
+        let installed = try await installer.install(appManifest: fixture.parent)
+
+        XCTAssertEqual(fixture.parent.effectiveOfflineCache.version, "1")
+        XCTAssertEqual(installed.version, "1")
+        let entrypoint = try await installer.entrypointURL(for: installed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: entrypoint.path))
+    }
+
     func testExplicitRemovalClearsTheEntireInstalledPackage() async throws {
         let fixture = try makeFixture(version: "1")
         let installer = HTMLAppOfflinePackageInstaller(
