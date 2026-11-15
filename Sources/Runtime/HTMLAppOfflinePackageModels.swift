@@ -81,7 +81,17 @@ public struct InstalledHTMLAppPackage: Codable, Equatable, Sendable {
 public enum HTMLAppPackageProgress: Equatable, Sendable {
     case downloadingManifest
     case validatingManifest
+    case packageSize(totalBytes: Int64, fileCount: Int)
     case downloadingFile(current: Int, total: Int, path: String)
+    case downloadProgress(
+        current: Int,
+        total: Int,
+        path: String,
+        bytesWritten: Int64,
+        expectedBytes: Int64,
+        packageBytesWritten: Int64,
+        packageTotalBytes: Int64
+    )
     case validatingFile(current: Int, total: Int, path: String)
     case activating
     case completed
@@ -119,6 +129,21 @@ public struct HTMLAppPackageTransportResponse: Sendable {
 
 public protocol HTMLAppPackageTransport: Sendable {
     func data(from url: URL, maximumBytes: Int) async throws -> HTMLAppPackageTransportResponse
+    func data(
+        from url: URL,
+        maximumBytes: Int,
+        progress: @escaping @Sendable (_ bytesWritten: Int64, _ expectedBytes: Int64) -> Void
+    ) async throws -> HTMLAppPackageTransportResponse
+}
+
+public extension HTMLAppPackageTransport {
+    func data(
+        from url: URL,
+        maximumBytes: Int,
+        progress: @escaping @Sendable (_ bytesWritten: Int64, _ expectedBytes: Int64) -> Void
+    ) async throws -> HTMLAppPackageTransportResponse {
+        try await data(from: url, maximumBytes: maximumBytes)
+    }
 }
 
 public enum HTMLAppOfflinePackageError: Error, Equatable, LocalizedError {
