@@ -180,6 +180,10 @@ public class WebBrowserViewController: BaseViewController<WebBrowserViewModel> {
             forMainFrameOnly: true
         ))
         guard WebBridgeHostCapabilityPolicy.nativeBridgeEnabled else {
+            viewModel.configureOfflinePackageFallbackContext(
+                appID: params.payload?["webbridgekitAppId"],
+                documentURL: params.payload?["webbridgekitPageURL"].flatMap(URL.init(string:))
+            )
             configuredHideNavigationBar = params.hideNavigationBar || params.displayMode == .immersive
             configuredHideStatusBar = params.hideStatusBar || params.displayMode == .immersive
             title = params.customTitle ?? title
