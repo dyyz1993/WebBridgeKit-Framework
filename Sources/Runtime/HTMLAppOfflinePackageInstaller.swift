@@ -253,6 +253,7 @@ public final class HTMLAppWebManifestAdapter: @unchecked Sendable {
 public final class URLSessionHTMLAppPackageTransport: NSObject, HTMLAppPackageTransport, @unchecked Sendable {
     private struct PendingDownload {
         let maximumBytes: Int64
+        let progress: @Sendable (_ bytesWritten: Int64, _ expectedBytes: Int64) -> Void
         let continuation: CheckedContinuation<HTMLAppPackageTransportResponse, Error>
     }
 
@@ -265,12 +266,21 @@ public final class URLSessionHTMLAppPackageTransport: NSObject, HTMLAppPackageTr
     }
 
     public func data(from url: URL, maximumBytes: Int) async throws -> HTMLAppPackageTransportResponse {
+        try await data(from: url, maximumBytes: maximumBytes) { _, _ in }
+    }
+
+    public func data(
+        from url: URL,
+        maximumBytes: Int,
+        progress: @escaping @Sendable (_ bytesWritten: Int64, _ expectedBytes: Int64) -> Void
+    ) async throws -> HTMLAppPackageTransportResponse {
         guard maximumBytes >= 0 else { throw HTMLAppOfflinePackageError.resourceManifestTooLarge }
         return try await withCheckedThrowingContinuation { continuation in
             let task = session.downloadTask(with: url)
             lock.withLock {
                 pending[task.taskIdentifier] = PendingDownload(
                     maximumBytes: Int64(maximumBytes),
+                    progress: progress,
                     continuation: continuation
                 )
             }
@@ -292,7 +302,9 @@ extension URLSessionHTMLAppPackageTransport: URLSessionDownloadDelegate {
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        let maximum = lock.withLock { pending[downloadTask.taskIdentifier]?.maximumBytes }
+        let pendingDownload = lock.withLock { pending[downloadTask.taskIdentifier] }
+        let maximum = pendingDownload?.maximumBytes
+        pendingDownload?.progress(totalBytesWritten, max(totalBytesExpectedToWrite, 0))
         if let maximum,
            totalBytesWritten > maximum || (totalBytesExpectedToWrite > maximum && totalBytesExpectedToWrite > 0) {
             downloadTask.cancel()
@@ -609,7 +621,7 @@ public actor HTMLAppOfflinePackageInstaller {
 
     public func install(
         appManifest: HTMLAppManifest,
-        progress: @Sendable (HTMLAppPackageProgress) -> Void = { _ in }
+        progress: @escaping @Sendable (HTMLAppPackageProgress) -> Void = { _ in }
     ) async throws -> InstalledHTMLAppPackage {
         let previous = try? installedPackage(appID: appManifest.appID)
         do {
@@ -617,7 +629,8 @@ public actor HTMLAppOfflinePackageInstaller {
             progress(.downloadingManifest)
             let manifestResponse = try await transport.data(
                 from: resourceManifestURL,
-                maximumBytes: limits.maximumManifestBytes
+                maximumBytes: limits.maximumManifestBytes,
+                progress: { _, _ in }
             )
             try validateOrigin(manifestResponse.finalURL, against: appManifest)
             guard manifestResponse.data.count <= limits.maximumManifestBytes else {
@@ -635,6 +648,8 @@ public actor HTMLAppOfflinePackageInstaller {
                 throw HTMLAppOfflinePackageError.invalidResourceManifest
             }
             try validate(packageManifest, against: appManifest)
+            let packageTotalBytes = packageManifest.files.reduce(Int64(0)) { $0.addingReportingOverflow($1.size).partialValue }
+            progress(.packageSize(totalBytes: packageTotalBytes, fileCount: packageManifest.files.count))
 
             let appRoot = packagesRoot.appendingPathComponent(Self.stableID(appManifest.appID), isDirectory: true)
             let versionsRoot = appRoot.appendingPathComponent("versions", isDirectory: true)
@@ -644,13 +659,29 @@ public actor HTMLAppOfflinePackageInstaller {
 
             let staging = appRoot.appendingPathComponent("staging-\(UUID().uuidString)", isDirectory: true)
             try createProtectedDirectory(staging)
+            var completedBytes: Int64 = 0
             do {
                 for (index, file) in packageManifest.files.enumerated() {
                     guard let remoteURL = URL(string: file.url) else {
                         throw HTMLAppOfflinePackageError.invalidURL(file.url)
                     }
                     progress(.downloadingFile(current: index + 1, total: packageManifest.files.count, path: file.path))
-                    let response = try await transport.data(from: remoteURL, maximumBytes: Int(file.size))
+                    let response = try await transport.data(
+                        from: remoteURL,
+                        maximumBytes: Int(file.size)
+                    ) { bytesWritten, expectedBytes in
+                        let fileBytesWritten = min(bytesWritten, file.size)
+                        let packageBytesWritten = completedBytes + fileBytesWritten
+                        progress(.downloadProgress(
+                            current: index + 1,
+                            total: packageManifest.files.count,
+                            path: file.path,
+                            bytesWritten: fileBytesWritten,
+                            expectedBytes: expectedBytes,
+                            packageBytesWritten: packageBytesWritten,
+                            packageTotalBytes: packageTotalBytes
+                        ))
+                    }
                     try validateOrigin(response.finalURL, against: appManifest)
                     progress(.validatingFile(current: index + 1, total: packageManifest.files.count, path: file.path))
                     guard Int64(response.data.count) == file.size else {
@@ -665,6 +696,7 @@ public actor HTMLAppOfflinePackageInstaller {
                         withIntermediateDirectories: true
                     )
                     try response.data.write(to: destination, options: .atomic)
+                    completedBytes = completedBytes.addingReportingOverflow(file.size).partialValue
                 }
 
                 let directoryName = "\(Self.stableID(packageManifest.version))-\(String(Self.sha256(manifestResponse.data).prefix(16)))"

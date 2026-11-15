@@ -9,6 +9,23 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
         func set(_ data: Data?, forKey key: String) { values[key] = data }
     }
 
+    private final class ProgressRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [HTMLAppPackageProgress] = []
+
+        func append(_ value: HTMLAppPackageProgress) {
+            lock.lock()
+            values.append(value)
+            lock.unlock()
+        }
+
+        var events: [HTMLAppPackageProgress] {
+            lock.lock()
+            defer { lock.unlock() }
+            return values
+        }
+    }
+
     private actor MemoryTransport: HTMLAppPackageTransport {
         var responses: [URL: HTMLAppPackageTransportResponse]
         var errors: [URL: Error]
@@ -24,6 +41,18 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
             guard response.data.count <= maximumBytes else {
                 throw HTMLAppOfflinePackageError.resourceManifestTooLarge
             }
+            return response
+        }
+
+        func data(
+            from url: URL,
+            maximumBytes: Int,
+            progress: @escaping @Sendable (_ bytesWritten: Int64, _ expectedBytes: Int64) -> Void
+        ) async throws -> HTMLAppPackageTransportResponse {
+            let response = try await data(from: url, maximumBytes: maximumBytes)
+            let expected = Int64(response.data.count)
+            progress(expected / 2, expected)
+            progress(expected, expected)
             return response
         }
 
@@ -173,6 +202,33 @@ final class HTMLAppOfflinePackageInstallerTests: XCTestCase {
             from: Data(contentsOf: appRoot.appendingPathComponent("installed.json"))
         )
         XCTAssertEqual(metadata, installed)
+    }
+
+    func testInstallReportsExpectedSizeAndDownloadedBytes() async throws {
+        let fixture = try makeFixture(version: "1")
+        let installer = HTMLAppOfflinePackageInstaller(
+            transport: MemoryTransport(responses: fixture.responses),
+            packagesRoot: root
+        )
+        let recorder = ProgressRecorder()
+
+        _ = try await installer.install(appManifest: fixture.parent) { recorder.append($0) }
+
+        let events = recorder.events
+        let expectedTotal = Int64("<html>v1</html>".utf8.count + "body{}".utf8.count)
+        XCTAssertEqual(events.first { if case .packageSize = $0 { return true } else { return false } }, .packageSize(totalBytes: expectedTotal, fileCount: 2))
+        XCTAssertEqual(
+            events.last { if case .downloadProgress = $0 { return true } else { return false } },
+            .downloadProgress(
+                current: 2,
+                total: 2,
+                path: "assets/style.css",
+                bytesWritten: Int64("body{}".utf8.count),
+                expectedBytes: Int64("body{}".utf8.count),
+                packageBytesWritten: expectedTotal,
+                packageTotalBytes: expectedTotal
+            )
+        )
     }
 
     func testLegacyMetadataPackageRepairsOverwrittenResourceManifest() async throws {
