@@ -250,99 +250,6 @@ public final class HTMLAppWebManifestAdapter: @unchecked Sendable {
     }
 }
 
-public final class URLSessionHTMLAppPackageTransport: NSObject, HTMLAppPackageTransport, @unchecked Sendable {
-    private struct PendingDownload {
-        let maximumBytes: Int64
-        let continuation: CheckedContinuation<HTMLAppPackageTransportResponse, Error>
-    }
-
-    private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
-    private let lock = NSLock()
-    private var pending: [Int: PendingDownload] = [:]
-
-    public override init() {
-        super.init()
-    }
-
-    public func data(from url: URL, maximumBytes: Int) async throws -> HTMLAppPackageTransportResponse {
-        guard maximumBytes >= 0 else { throw HTMLAppOfflinePackageError.resourceManifestTooLarge }
-        return try await withCheckedThrowingContinuation { continuation in
-            let task = session.downloadTask(with: url)
-            lock.withLock {
-                pending[task.taskIdentifier] = PendingDownload(
-                    maximumBytes: Int64(maximumBytes),
-                    continuation: continuation
-                )
-            }
-            task.resume()
-        }
-    }
-
-    private func finish(taskID: Int, result: Result<HTMLAppPackageTransportResponse, Error>) {
-        let continuation = lock.withLock { pending.removeValue(forKey: taskID)?.continuation }
-        continuation?.resume(with: result)
-    }
-}
-
-extension URLSessionHTMLAppPackageTransport: URLSessionDownloadDelegate {
-    public func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        let maximum = lock.withLock { pending[downloadTask.taskIdentifier]?.maximumBytes }
-        if let maximum,
-           totalBytesWritten > maximum || (totalBytesExpectedToWrite > maximum && totalBytesExpectedToWrite > 0) {
-            downloadTask.cancel()
-            finish(taskID: downloadTask.taskIdentifier, result: .failure(HTMLAppOfflinePackageError.resourceManifestTooLarge))
-        }
-    }
-
-    public func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        do {
-            let maximum = lock.withLock { pending[downloadTask.taskIdentifier]?.maximumBytes } ?? 0
-            let attributes = try FileManager.default.attributesOfItem(atPath: location.path)
-            let size = (attributes[.size] as? NSNumber)?.int64Value ?? Int64.max
-            guard size <= maximum else {
-                finish(taskID: downloadTask.taskIdentifier, result: .failure(HTMLAppOfflinePackageError.resourceManifestTooLarge))
-                return
-            }
-            guard let response = downloadTask.response,
-                  let finalURL = response.url else {
-                throw HTMLAppOfflinePackageError.transportFailed("missing response")
-            }
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                throw HTMLAppOfflinePackageError.transportFailed("HTTP \(http.statusCode)")
-            }
-            let data = try Data(contentsOf: location, options: .mappedIfSafe)
-            finish(taskID: downloadTask.taskIdentifier, result: .success(.init(data: data, finalURL: finalURL)))
-        } catch {
-            finish(taskID: downloadTask.taskIdentifier, result: .failure(error))
-        }
-    }
-
-    public func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        guard let error else { return }
-        let exists = lock.withLock { pending[task.taskIdentifier] != nil }
-        if exists {
-            finish(
-                taskID: task.taskIdentifier,
-                result: .failure(HTMLAppOfflinePackageError.transportFailed(error.localizedDescription))
-            )
-        }
-    }
-}
-
 public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
     private let packagesRoot: URL
     private let fileManager: FileManager
@@ -609,7 +516,7 @@ public actor HTMLAppOfflinePackageInstaller {
 
     public func install(
         appManifest: HTMLAppManifest,
-        progress: @Sendable (HTMLAppPackageProgress) -> Void = { _ in }
+        progress: @escaping @Sendable (HTMLAppPackageProgress) -> Void = { _ in }
     ) async throws -> InstalledHTMLAppPackage {
         let previous = try? installedPackage(appID: appManifest.appID)
         do {
@@ -617,7 +524,8 @@ public actor HTMLAppOfflinePackageInstaller {
             progress(.downloadingManifest)
             let manifestResponse = try await transport.data(
                 from: resourceManifestURL,
-                maximumBytes: limits.maximumManifestBytes
+                maximumBytes: limits.maximumManifestBytes,
+                progress: { _, _ in }
             )
             try validateOrigin(manifestResponse.finalURL, against: appManifest)
             guard manifestResponse.data.count <= limits.maximumManifestBytes else {
@@ -635,6 +543,8 @@ public actor HTMLAppOfflinePackageInstaller {
                 throw HTMLAppOfflinePackageError.invalidResourceManifest
             }
             try validate(packageManifest, against: appManifest)
+            let packageTotalBytes = packageManifest.files.reduce(Int64(0)) { $0.addingReportingOverflow($1.size).partialValue }
+            progress(.packageSize(totalBytes: packageTotalBytes, fileCount: packageManifest.files.count))
 
             let appRoot = packagesRoot.appendingPathComponent(Self.stableID(appManifest.appID), isDirectory: true)
             let versionsRoot = appRoot.appendingPathComponent("versions", isDirectory: true)
@@ -644,13 +554,29 @@ public actor HTMLAppOfflinePackageInstaller {
 
             let staging = appRoot.appendingPathComponent("staging-\(UUID().uuidString)", isDirectory: true)
             try createProtectedDirectory(staging)
+            var completedBytes: Int64 = 0
             do {
                 for (index, file) in packageManifest.files.enumerated() {
                     guard let remoteURL = URL(string: file.url) else {
                         throw HTMLAppOfflinePackageError.invalidURL(file.url)
                     }
                     progress(.downloadingFile(current: index + 1, total: packageManifest.files.count, path: file.path))
-                    let response = try await transport.data(from: remoteURL, maximumBytes: Int(file.size))
+                    let response = try await transport.data(
+                        from: remoteURL,
+                        maximumBytes: Int(file.size)
+                    ) { bytesWritten, expectedBytes in
+                        let fileBytesWritten = min(bytesWritten, file.size)
+                        let packageBytesWritten = completedBytes + fileBytesWritten
+                        progress(.downloadProgress(
+                            current: index + 1,
+                            total: packageManifest.files.count,
+                            path: file.path,
+                            bytesWritten: fileBytesWritten,
+                            expectedBytes: expectedBytes,
+                            packageBytesWritten: packageBytesWritten,
+                            packageTotalBytes: packageTotalBytes
+                        ))
+                    }
                     try validateOrigin(response.finalURL, against: appManifest)
                     progress(.validatingFile(current: index + 1, total: packageManifest.files.count, path: file.path))
                     guard Int64(response.data.count) == file.size else {
@@ -665,6 +591,7 @@ public actor HTMLAppOfflinePackageInstaller {
                         withIntermediateDirectories: true
                     )
                     try response.data.write(to: destination, options: .atomic)
+                    completedBytes = completedBytes.addingReportingOverflow(file.size).partialValue
                 }
 
                 let directoryName = "\(Self.stableID(packageManifest.version))-\(String(Self.sha256(manifestResponse.data).prefix(16)))"
