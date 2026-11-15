@@ -8,7 +8,7 @@ Sources/Controllers/CacheAppDetailViewController.swift 528
 Sources/Controllers/CacheManagementViewController.swift 628
 Sources/Controllers/WebBrowserViewController+Navigation.swift 534
 Sources/Controllers/WebBrowserViewController+Pages.swift 507
-Sources/Controllers/WebBrowserViewController.swift 743
+Sources/Controllers/WebBrowserViewController.swift 747
 Sources/Controllers/WebCacheDebugPanelViewController+Cells.swift 566
 Sources/Controllers/WebPageHistoryViewController.swift 519
 Sources/Controllers/WebViewController.swift 732

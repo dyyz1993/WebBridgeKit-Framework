@@ -49,6 +49,7 @@ public class WebBrowserViewModel: ViewModel {
     public let initialURL: URL?
     public private(set) var managedHTMLAppID: String?
     public private(set) var managedHTMLAppDocumentURL: URL?
+    public private(set) var offlinePackageFallbackDocumentURL: URL?
     public private(set) var isRecoveringFromOfflinePackageFallback = false
     public let disposeBag = DisposeBag()
 
@@ -193,8 +194,18 @@ public class WebBrowserViewModel: ViewModel {
     public func configureManagedHTMLApp(appID: String?, documentURL: URL?) {
         managedHTMLAppID = appID
         managedHTMLAppDocumentURL = documentURL
+        offlinePackageFallbackDocumentURL = documentURL
         isRecoveringFromOfflinePackageFallback = false
         jsBridge.configureManagedHTMLApp(appID: appID, documentURL: documentURL)
+    }
+
+    /// Store builds disable the native bridge, but strong-offline packages still
+    /// need the trusted HTTPS page for a bounded recovery. Preserve this URL
+    /// separately from the document URL that changes after local navigation.
+    public func configureOfflinePackageFallbackContext(appID: String?, documentURL: URL?) {
+        managedHTMLAppID = appID
+        offlinePackageFallbackDocumentURL = documentURL
+        isRecoveringFromOfflinePackageFallback = false
     }
 
     public func beginOfflinePackageFallback() -> Bool {

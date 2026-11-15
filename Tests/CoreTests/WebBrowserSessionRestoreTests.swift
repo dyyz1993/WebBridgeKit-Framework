@@ -33,4 +33,35 @@ final class WebBrowserSessionRestoreTests: XCTestCase {
         )
         XCTAssertTrue(viewModel.beginOfflinePackageFallback())
     }
+
+    func testStoreBrowserPreservesTrustedOfflineFallbackContextWithoutNativeBridge() {
+        let previousOverride = WebBridgeHostCapabilityPolicy.containerOnlyOverride
+        WebBridgeHostCapabilityPolicy.containerOnlyOverride = true
+        defer { WebBridgeHostCapabilityPolicy.containerOnlyOverride = previousOverride }
+
+        let localEntrypoint = URL(fileURLWithPath: "/tmp/package/drel.html")
+        let controller = WebBrowserViewController(url: localEntrypoint)
+        let trustedPageURL = URL(string: "https://vot.example.test/")!
+        let appID = "app.vot.example.test"
+
+        controller.configure(
+            with: WebBrowserParams(
+                displayMode: .immersive,
+                payload: [
+                    "webbridgekitAppId": appID,
+                    "webbridgekitPageURL": trustedPageURL.absoluteString,
+                    "webbridgekitOfflineMode": "strong"
+                ],
+                useManifestLoader: false
+            )
+        )
+
+        XCTAssertEqual(controller.htmlAppID, appID)
+        XCTAssertEqual(controller.viewModel.offlinePackageFallbackDocumentURL, trustedPageURL)
+
+        controller.viewModel.updateManagedHTMLAppDocumentURL(localEntrypoint)
+        XCTAssertEqual(controller.viewModel.managedHTMLAppDocumentURL, localEntrypoint)
+        XCTAssertEqual(controller.viewModel.offlinePackageFallbackDocumentURL, trustedPageURL)
+        XCTAssertTrue(controller.viewModel.beginOfflinePackageFallback())
+    }
 }
