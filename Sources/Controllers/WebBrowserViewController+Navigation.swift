@@ -396,7 +396,7 @@ extension WebBrowserViewController: WKNavigationDelegate {
     private func recoverFromFailedOfflinePackage(_ error: Error) {
         guard viewModel.beginOfflinePackageFallback(),
               webView.url?.isFileURL == true,
-              let managedPageURL = viewModel.managedHTMLAppDocumentURL,
+              let managedPageURL = viewModel.offlinePackageFallbackDocumentURL,
               managedPageURL.scheme == "https" else {
             return
         }
