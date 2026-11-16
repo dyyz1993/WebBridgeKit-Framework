@@ -68,10 +68,16 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
     private let immersiveExitControl = ImmersivePWAExitControl()
     private var immersiveHistoryBackGesture: UIPanGestureRecognizer?
     private var immersiveHistoryBackEdgeView: UIView?
-    private var managedHTMLAppID: String?
+    var managedHTMLAppID: String?
     var managedHTMLAppDocumentURL: URL?
     var hasAttemptedOfflinePackageFallback = false
     var isRecoveringFromOfflinePackageFallback = false
+    var offlineDiagnosticsAttemptID: String?
+    var initialOfflinePackageURL: URL?
+    var didInstallOfflineDiagnosticsSupport = false
+    var didReceiveOfflinePageReady = false
+    var didShowOfflineLoadFailure = false
+    var offlinePageTimeoutWorkItem: DispatchWorkItem?
 
     //  浏览器特性控制（默认全部禁用，通过 Bridge 按需开启）
     var bouncesEnabled = false
@@ -131,6 +137,8 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
             StructuredLogger.shared.debug("Created new WebView instance", category: .lifecycle)
         }
 
+        installOfflineDiagnosticsSupport()
+
         setupNotifications()
 
         // 默认禁用所有浏览器特性
@@ -156,51 +164,13 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
             navigationController?.interactivePopGestureRecognizer?.isEnabled = false
         }
 
-        //  强制横屏：在 viewWillAppear 时再次强制旋转到目标方向
-        if let config = browserConfig {
-            if config.orientation == .landscapeLeft {
-                rotateTo(.landscapeLeft)
-                StructuredLogger.shared.debug("viewWillAppear - Forcing landscapeLeft orientation", category: .ui)
-            } else if config.orientation == .landscapeRight {
-                rotateTo(.landscapeRight)
-                StructuredLogger.shared.debug("viewWillAppear - Forcing landscapeRight orientation", category: .ui)
-            } else if config.orientation == .landscape {
-                rotateTo(.landscapeLeft)
-                StructuredLogger.shared.debug("viewWillAppear - Forcing landscape (left) orientation", category: .ui)
-            } else if config.orientation == .portrait {
-                rotateTo(.portrait)
-                StructuredLogger.shared.debug("viewWillAppear - Forcing portrait orientation", category: .ui)
-            }
-        }
+        applyConfiguredOrientation()
     }
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        //  强制横屏：在 viewDidAppear 时最后确认一次方向（防止用户快速旋转设备）
-        if let config = browserConfig {
-            if config.orientation == .landscapeLeft {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.rotateTo(.landscapeLeft)
-                    StructuredLogger.shared.debug("viewDidAppear - Final forcing landscapeLeft orientation", category: .ui)
-                }
-            } else if config.orientation == .landscapeRight {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.rotateTo(.landscapeRight)
-                    StructuredLogger.shared.debug("viewDidAppear - Final forcing landscapeRight orientation", category: .ui)
-                }
-            } else if config.orientation == .landscape {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.rotateTo(.landscapeLeft)
-                    StructuredLogger.shared.debug("viewDidAppear - Final forcing landscape (left) orientation", category: .ui)
-                }
-            } else if config.orientation == .portrait {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.rotateTo(.portrait)
-                    StructuredLogger.shared.debug("viewDidAppear - Final forcing portrait orientation", category: .ui)
-                }
-            }
-        }
+        confirmConfiguredOrientationAfterAppear()
     }
 
     public override func viewWillDisappear(_ animated: Bool) {
@@ -359,6 +329,14 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         _ = view
         self.url = url
         if url.isFileURL {
+            if initialOfflinePackageURL == nil {
+                initialOfflinePackageURL = url
+            }
+            recordOfflineDiagnosticsEvent(
+                phase: .navigation,
+                status: .started,
+                loadSource: .offlinePackage
+            )
             // `WKWebView.load(URLRequest(fileURL:))` is not equivalent to the
             // file-document API and can fail after connectivity disappears.
             // Keep query parameters on the document URL (Drel route/context),
@@ -372,6 +350,13 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
                 category: .navigation
             )
             return
+        }
+        if offlineDiagnosticsAttemptID != nil {
+            recordOfflineDiagnosticsEvent(
+                phase: .navigation,
+                status: .started,
+                loadSource: isRecoveringFromOfflinePackageFallback ? .online : .unknown
+            )
         }
         let policy: URLRequest.CachePolicy = preferCachedContent
             ? .returnCacheDataElseLoad
@@ -393,8 +378,14 @@ public class WebViewController: UIViewController, UINavigationControllerDelegate
         ))
         let managedAppID = params.payload?["webbridgekitAppId"]
         let managedPageURL = params.payload?["webbridgekitPageURL"].flatMap(URL.init(string:))
+        let offlineContext = params.offlineDiagnostics
         managedHTMLAppID = managedAppID
         managedHTMLAppDocumentURL = managedPageURL
+        if let offlineContext {
+            managedHTMLAppID = offlineContext.appID
+            offlineDiagnosticsAttemptID = offlineContext.attemptID
+            managedHTMLAppDocumentURL = params.offlineFallbackURL ?? managedPageURL
+        }
         bridge.configureManagedHTMLApp(appID: managedAppID, documentURL: managedPageURL)
         supportedOrientations = params.orientation
         isStatusBarHidden = params.hideStatusBar

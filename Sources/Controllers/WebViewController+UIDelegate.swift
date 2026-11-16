@@ -20,6 +20,11 @@ extension WebViewController {
 @MainActor
 extension WebViewController {
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == Self.offlineDiagnosticsMessageName {
+            handleOfflineDiagnosticsMessage(message)
+            return
+        }
+
         guard let body = message.body as? [String: Any],
               let action = body["action"] as? String else {
             return
