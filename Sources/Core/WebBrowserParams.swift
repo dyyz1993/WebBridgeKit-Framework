@@ -14,6 +14,28 @@ import UIKit
 /// 浏览器打开参数配置
 public struct WebBrowserParams {
 
+    public struct OfflineDiagnosticsContext: Equatable, Sendable {
+        public let attemptID: String
+        public let appID: String
+        public let packageVersion: String?
+        public let manifestDigestPrefix: String?
+        public let source: String
+
+        public init(
+            attemptID: String,
+            appID: String,
+            packageVersion: String? = nil,
+            manifestDigestPrefix: String? = nil,
+            source: String
+        ) {
+            self.attemptID = attemptID
+            self.appID = appID
+            self.packageVersion = packageVersion
+            self.manifestDigestPrefix = manifestDigestPrefix
+            self.source = source
+        }
+    }
+
     // MARK: - Display Mode
 
     public enum DisplayMode: String {
@@ -98,6 +120,14 @@ public struct WebBrowserParams {
     /// 附加负载数据（用于透传给网页）
     public let payload: [String: String]?
 
+    /// Online page used when a verified strong-offline entrypoint cannot be
+    /// loaded by WKWebView. Container-only launches may have no bridge payload,
+    /// so this field must not depend on `payload`.
+    public let offlineFallbackURL: URL?
+
+    /// Whitelisted metadata for the local, never-uploaded offline diagnostics.
+    public let offlineDiagnostics: OfflineDiagnosticsContext?
+
     // MARK: - Initialization
 
     public init(
@@ -115,6 +145,8 @@ public struct WebBrowserParams {
         customTitle: String? = nil,
         debugMode: Bool = false,
         payload: [String: String]? = nil,
+        offlineFallbackURL: URL? = nil,
+        offlineDiagnostics: OfflineDiagnosticsContext? = nil,
         useManifestLoader: Bool = true,
         preferCachedContent: Bool = false
     ) {
@@ -132,6 +164,8 @@ public struct WebBrowserParams {
         self.customTitle = customTitle
         self.debugMode = debugMode
         self.payload = payload
+        self.offlineFallbackURL = offlineFallbackURL
+        self.offlineDiagnostics = offlineDiagnostics
         self.useManifestLoader = useManifestLoader
         self.preferCachedContent = preferCachedContent
     }
