@@ -179,31 +179,105 @@ extension WebViewController {
         webView.url?.isFileURL == true ? .offlinePackage : .online
     }
 
-    private static let offlineDiagnosticsScript: String = """
+    static let offlineDiagnosticsScript: String = """
 (() => {
   if (window.__drelOfflineDiagnosticsInstalled) return;
   window.__drelOfflineDiagnosticsInstalled = true;
+  const WATCH_BUDGET_MS = 7000;
   const send = (value) => {
     try { window.webkit.messageHandlers.DrelOfflineDiagnostics.postMessage(value); } catch (_) {}
+  };
+  const isVisible = (element) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    const style = getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  const hasVisibleMedia = () => {
+    const media = document.querySelectorAll('canvas, svg, img, video');
+    for (const element of media) {
+      if (isVisible(element)) return true;
+    }
+    return false;
+  };
+  const contentReady = () => {
+    if (document.querySelector('[data-drel-ready]')) return true;
+    const body = document.body;
+    if (body && body.innerText && body.innerText.trim().length > 0) return true;
+    return hasVisibleMedia();
+  };
+  let reportedReady = false;
+  let watchStop = null;
+  const stopWatching = () => {
+    if (watchStop) {
+      watchStop();
+      watchStop = null;
+    }
   };
   const reportReady = () => {
     const body = document.body;
     const rect = body ? body.getBoundingClientRect() : null;
     const bodyStyle = body ? getComputedStyle(body) : null;
-    const hasVisibleText = !!body && document.body.innerText.trim().length > 0;
-    const hasVisibleMedia = !!document.querySelector('canvas:not([hidden]), svg:not([hidden]), img:not([hidden]), video:not([hidden])');
-    const explicitReady = document.querySelector('[data-drel-ready]');
-    const contentReady = !!explicitReady || hasVisibleText || hasVisibleMedia;
-    send({
-      event: 'pageReady',
-      bodyVisible: !!rect && rect.width > 0 && rect.height > 0 && bodyStyle.visibility !== 'hidden' && bodyStyle.display !== 'none',
-      keyElementFound: contentReady
+    const ready = contentReady();
+    const becameReady = ready && !reportedReady;
+    if (ready) reportedReady = true;
+    if (becameReady || !reportedReady) {
+      send({
+        event: 'pageReady',
+        bodyVisible: !!rect && rect.width > 0 && rect.height > 0 && bodyStyle.visibility !== 'hidden' && bodyStyle.display !== 'none',
+        keyElementFound: ready
+      });
+    }
+    if (ready) stopWatching();
+  };
+  const startWatching = () => {
+    if (watchStop) return;
+    let lastCheck = 0;
+    let pendingCheck = 0;
+    let deadline = 0;
+    let observer = null;
+    let interval = 0;
+    const recheck = () => {
+      const now = Date.now();
+      if (now < lastCheck + 400) return;
+      lastCheck = now;
+      if (contentReady()) {
+        reportReady();
+        return;
+      }
+      if (now >= deadline) stopWatching();
+    };
+    observer = new MutationObserver(() => {
+      if (pendingCheck) return;
+      pendingCheck = setTimeout(() => {
+        pendingCheck = 0;
+        recheck();
+      }, 250);
     });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden']
+    });
+    interval = setInterval(recheck, 1000);
+    deadline = Date.now() + WATCH_BUDGET_MS;
+    watchStop = () => {
+      clearTimeout(pendingCheck);
+      clearInterval(interval);
+      if (observer) observer.disconnect();
+    };
+  };
+  const evaluateOnce = () => {
+    reportReady();
+    if (!reportedReady) startWatching();
   };
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    setTimeout(reportReady, 0);
+    setTimeout(evaluateOnce, 0);
   } else {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(reportReady, 0), { once: true });
+    document.addEventListener('DOMContentLoaded', () => setTimeout(evaluateOnce, 0), { once: true });
   }
   window.addEventListener('error', () => send({ event: 'scriptError' }), true);
   document.addEventListener('resourceerror', () => send({ event: 'resourceError' }), true);
