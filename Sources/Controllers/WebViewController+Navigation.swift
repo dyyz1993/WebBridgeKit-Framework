@@ -56,6 +56,7 @@ extension WebViewController {
     /// 页面加载完成
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         bridge.updateManagedHTMLAppDocumentURL(webView.url)
+        markOfflineNavigationFinished()
         // 页面 meta 声明身份（webbridgekit-app-id 等）：导航完成后读取回填判定链
         bridge.refreshDeclaredIdentity()
         // 每次导航后同步收藏按钮状态（URL 变化时已收藏/未收藏可能翻转）
@@ -104,6 +105,12 @@ extension WebViewController {
             StructuredLogger.shared.error("   - Error: \(error.localizedDescription)", category: .ui)
         }
         #endif
+        recordOfflineDiagnosticsEvent(
+            phase: .navigation,
+            status: .failed,
+            loadSource: currentOfflineDiagnosticsSource,
+            error: error
+        )
         recoverFromFailedOfflinePackage(error)
     }
 
@@ -121,23 +128,58 @@ extension WebViewController {
             StructuredLogger.shared.error("   - Error: \(error.localizedDescription)", category: .ui)
         }
         #endif
+        recordOfflineDiagnosticsEvent(
+            phase: .navigation,
+            status: .failed,
+            loadSource: currentOfflineDiagnosticsSource,
+            error: error
+        )
         recoverFromFailedOfflinePackage(error)
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        recordOfflineDiagnosticsEvent(
+            phase: .navigation,
+            status: .failed,
+            loadSource: currentOfflineDiagnosticsSource,
+            outcome: "webContentProcessTerminated"
+        )
+        presentOfflineLoadFailure()
     }
 
     /// A verified strong-offline package must never become a dead end. If its
     /// local file navigation fails, fall back once to the manifest's online
     /// start URL while retaining the same immersive configuration.
-    private func recoverFromFailedOfflinePackage(_ error: Error) {
+    func recoverFromFailedOfflinePackage(_ error: Error) {
+        if hasAttemptedOfflinePackageFallback {
+            presentOfflineLoadFailure()
+            return
+        }
         guard !hasAttemptedOfflinePackageFallback,
               !isRecoveringFromOfflinePackageFallback,
-              let managedPageURL = managedHTMLAppDocumentURL,
+              let managedPageURL = browserConfig?.offlineFallbackURL ?? managedHTMLAppDocumentURL,
               managedPageURL.scheme == "https",
               webView.url?.isFileURL == true else {
+            if offlineDiagnosticsAttemptID != nil {
+                recordOfflineDiagnosticsEvent(
+                    phase: .fallback,
+                    status: .skipped,
+                    loadSource: .online,
+                    outcome: "fallbackUnavailable"
+                )
+                presentOfflineLoadFailure()
+            }
             return
         }
 
         hasAttemptedOfflinePackageFallback = true
         isRecoveringFromOfflinePackageFallback = true
+        recordOfflineDiagnosticsEvent(
+            phase: .fallback,
+            status: .started,
+            loadSource: .online,
+            outcome: "fallbackStarted"
+        )
         StructuredLogger.shared.warning(
             "[WARN] [OfflinePackage] Local entrypoint failed (\(error.localizedDescription)); falling back to \(managedPageURL.absoluteString)",
             category: .navigation
