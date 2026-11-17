@@ -255,7 +255,7 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
     private let fileManager: FileManager
     private static let metadataFilename = "installed.json"
     private static let legacyResourceManifestFilename = "package.json"
-    private static let resourceDescriptorFilename = ".drel-verified-resource-manifest"
+    static let resourceDescriptorFilename = ".drel-verified-resource-manifest"
 
     /// Default on-disk root for downloaded offline packages
     /// (`Application Support/WebBridgeKit/Packages`). Storage accounting
@@ -305,18 +305,43 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
     }
 
     /// Maps a verified active offline package to its native-selected identity.
-    public func logicalDocumentURL(for current: URL, parent: HTMLAppManifest, launchPage: URL?) -> URL? {
+    public func logicalDocumentURL(
+        for current: URL,
+        parent: HTMLAppManifest,
+        launchPage: URL?,
+        offlineFallback: Bool = false,
+        signatureVerifier: ((HTMLAppManifest) -> Bool)? = nil
+    ) -> URL? {
         guard current.isFileURL, let launchPage, parent.allows(documentURL: launchPage),
-              parent.effectiveOfflineCache.isStrongOfflineEligible,
-              let package = try? installedPackage(appID: parent.appID),
-              package.version == parent.effectiveOfflineCache.version,
-              package.resourceManifestSHA256 == parent.effectiveOfflineCache.resourceManifestSHA256,
-              let entrypoint = try? entrypointURL(for: package) else { return nil }
+              parent.effectiveOfflineCache.isStrongOfflineEligible else { return nil }
+        let package: InstalledHTMLAppPackage
+        let identityParent: HTMLAppManifest
+        if let active = try? installedPackage(appID: parent.appID),
+           active.version == parent.effectiveOfflineCache.version,
+           active.resourceManifestSHA256 == parent.effectiveOfflineCache.resourceManifestSHA256,
+           (try? entrypointURL(for: active)) != nil {
+            package = active
+            identityParent = parent
+        } else if offlineFallback,
+                  let stale = verifiedStaleOfflinePackage(appID: parent.appID, signatureVerifier: signatureVerifier) {
+            package = stale
+            identityParent = stale.signedParentManifest ?? parent
+        } else {
+            return nil
+        }
+        guard let entrypoint = try? entrypointURL(for: package) else { return nil }
         if current.standardizedFileURL.resolvingSymlinksInPath().path ==
             entrypoint.standardizedFileURL.resolvingSymlinksInPath().path {
             return launchPage
         }
-        return verifiedDocumentURL(for: current, package: package, parent: parent)
+        if identityParent == parent {
+            return verifiedDocumentURL(for: current, package: package, parent: parent)
+        }
+        return resolvedOfflineDocumentURL(
+            for: current,
+            package: package,
+            originAuthority: identityParent
+        )
     }
 
     /// Resolve additional offline documents only through the digest-pinned
@@ -324,15 +349,31 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
     public func verifiedDocumentURL(for fileURL: URL, package: InstalledHTMLAppPackage,
                                     parent: HTMLAppManifest) -> URL? {
         guard fileURL.isFileURL, let current = try? installedPackage(appID: package.appID), current == package else { return nil }
+        return resolvedOfflineDocumentURL(for: fileURL, package: package, originAuthority: parent)
+    }
+
+    /// Private implementation shared by the public resolver and the internal
+    /// offline fallback. originAuthority is only ever the current signed
+    /// manifest or a persisted parent that just passed the signature
+    /// verifier, so external callers cannot inject a looser origin policy.
+    private func resolvedOfflineDocumentURL(
+        for fileURL: URL,
+        package: InstalledHTMLAppPackage,
+        originAuthority: HTMLAppManifest
+    ) -> URL? {
         let root = packageRoot(for: package)
         let descriptorURL = root.appendingPathComponent(".drel-verified-resource-manifest")
-        guard let data = try? Data(contentsOf: descriptorURL), data.count <= 4_194_304,
+        let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        guard let descriptorSize = Self.boundedRegularFileSize(
+                  at: descriptorURL, withinRoot: rootPath, maximumBytes: 4_194_304
+              ),
+              let data = try? Data(contentsOf: descriptorURL),
+              Int64(data.count) == descriptorSize,
               SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == package.resourceManifestSHA256,
               let descriptor = try? JSONDecoder().decode(HTMLAppOfflinePackageManifest.self, from: data),
               descriptor.schemaVersion == HTMLAppOfflinePackageManifest.supportedSchemaVersion,
               descriptor.appID == package.appID, descriptor.version == package.version,
               descriptor.entrypoint == package.entrypoint else { return nil }
-        let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         let actual = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
         guard actual.hasPrefix(rootPath) else { return nil }
         for file in descriptor.files where HTMLAppOfflinePackageInstaller.isSafeRelativePath(file.path) {
@@ -342,7 +383,7 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
                   (attributes[.size] as? NSNumber)?.int64Value == file.size,
                   let bytes = try? Data(contentsOf: URL(fileURLWithPath: actual)),
                   SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined() == file.sha256,
-                  let original = URL(string: file.url), parent.allows(documentURL: original) else { continue }
+                  let original = URL(string: file.url), originAuthority.allows(documentURL: original) else { continue }
             return original
         }
         return nil
@@ -406,7 +447,7 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
         }
     }
 
-    private func packageRoot(for package: InstalledHTMLAppPackage) -> URL {
+    func packageRoot(for package: InstalledHTMLAppPackage) -> URL {
         packagesRoot
             .appendingPathComponent(Self.stableID(package.appID), isDirectory: true)
             .appendingPathComponent("versions/\(package.directoryName)", isDirectory: true)
@@ -478,7 +519,7 @@ public final class HTMLAppOfflinePackageLocator: @unchecked Sendable {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func sha256(_ data: Data) -> String {
+    static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
@@ -601,7 +642,8 @@ public actor HTMLAppOfflinePackageInstaller {
                     entrypoint: packageManifest.entrypoint,
                     directoryName: directoryName,
                     resourceManifestSHA256: Self.sha256(manifestResponse.data),
-                    installedAt: now()
+                    installedAt: now(),
+                    signedParentManifest: appManifest
                 )
                 try manifestResponse.data.write(to: staging.appendingPathComponent(".drel-verified-resource-manifest"), options: .atomic)
 

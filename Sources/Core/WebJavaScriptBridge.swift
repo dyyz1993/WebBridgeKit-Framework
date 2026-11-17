@@ -45,15 +45,16 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
     private var userGestureRecognizer: WBKUserGestureRecognizer?
     var userGestureValidationOverride: (() -> Bool)?
-    private var managedAppID: String?
+    private(set) var managedAppID: String?
     private var managedDocumentURL: URL?
-    private var managedLaunchPageURL: URL?
-    private let offlinePackageLocator: HTMLAppOfflinePackageLocator
+    private(set) var managedLaunchPageURL: URL?
+    let offlinePackageLocator: HTMLAppOfflinePackageLocator
     public weak var permissionConsentPresenter: HTMLAppPermissionConsentPresenting?
-    private let trustRegistry: HTMLAppTrustRegistry
+    let trustRegistry: HTMLAppTrustRegistry
     private let permissionLedger: HTMLAppPermissionLedger
     private let nativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding
     private let capabilityGateway: HTMLAppCapabilityGateway
+    let offlineFallbackSignatureVerifier: ((HTMLAppManifest) -> Bool)?, isOfflineProvider: (() -> Bool)?
     private let gatewayIdentity: String?
     private struct PendingAuthorization {
         let subject: HTMLAppPermissionSubject
@@ -192,7 +193,9 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
             trustRegistry: HTMLAppRuntimeCenter.shared.trustRegistry,
             permissionLedger: HTMLAppRuntimeCenter.shared.permissionLedger,
             nativeAuthorizationProvider: HTMLAppRuntimeCenter.shared.systemPermissionAdapter,
-            gatewayIdentity: nil
+            gatewayIdentity: nil,
+            offlineFallbackSignatureVerifier: HTMLAppOfflineFallbackRuntime.signatureVerifier,
+            isOfflineProvider: HTMLAppOfflineFallbackRuntime.isOfflineProvider
         )
     }
 
@@ -201,13 +204,15 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         permissionLedger: HTMLAppPermissionLedger,
         nativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding,
         gatewayIdentity: String? = "test-gateway",
-        offlinePackageLocator: HTMLAppOfflinePackageLocator = HTMLAppOfflinePackageLocator()
+        offlinePackageLocator: HTMLAppOfflinePackageLocator = HTMLAppOfflinePackageLocator(),
+        offlineFallbackSignatureVerifier: ((HTMLAppManifest) -> Bool)? = nil, isOfflineProvider: (() -> Bool)? = nil
     ) {
         self.trustRegistry = trustRegistry
         self.permissionLedger = permissionLedger
         self.nativeAuthorizationProvider = nativeAuthorizationProvider
         self.gatewayIdentity = gatewayIdentity
         self.offlinePackageLocator = offlinePackageLocator
+        self.offlineFallbackSignatureVerifier = offlineFallbackSignatureVerifier; self.isOfflineProvider = isOfflineProvider
         capabilityGateway = HTMLAppCapabilityGateway(
             trustRegistry: trustRegistry,
             permissionLedger: permissionLedger,
@@ -470,12 +475,6 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
                 completion(result, callbackId)
             }
         }
-    }
-
-    private func effectiveManagedDocumentURL(_ current: URL?) -> URL? {
-        guard let current, current.isFileURL else { return current }
-        guard let appID = managedAppID, let manifest = trustRegistry.manifest(for: appID) else { return nil }
-        return offlinePackageLocator.logicalDocumentURL(for: current, parent: manifest, launchPage: managedLaunchPageURL)
     }
 
     /// Reports only the current document's signed declarations and grants.

@@ -128,6 +128,24 @@ public class WebViewPool {
 
             // 创建预热的 WebView
             let config = WebBridgePool.shared.acquireConfiguration()
+            #if DEBUG
+            // Fixture-driven E2E parity: the pooled WebView must carry the
+            // same test-only bootstrap script as the direct creation paths,
+            // or fixture pages silently fall through to the real network.
+            // Warmup runs after the host armed the script (didFinishLaunching
+            // completes before this async block), so a nil script simply
+            // keeps production behavior.
+            if let debugBootstrapScript = HTMLAppOfflineFallbackRuntime.debugBootstrapUserScript,
+               !debugBootstrapScript.isEmpty {
+                config.userContentController.addUserScript(
+                    WKUserScript(
+                        source: debugBootstrapScript,
+                        injectionTime: .atDocumentStart,
+                        forMainFrameOnly: true
+                    )
+                )
+            }
+            #endif
             let webView = WKWebView(frame: .zero, configuration: config)
             webView.accessibilityIdentifier = "webViewPool.instance.0"
 

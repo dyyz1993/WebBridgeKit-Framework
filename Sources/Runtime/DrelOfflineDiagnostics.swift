@@ -253,6 +253,7 @@ public final class DrelOfflineDiagnostics: @unchecked Sendable {
     private static func safeOutcome(_ value: String) -> String {
         let allowed: Set<String> = [
             "launched", "resolved", "packageFound", "packageMissing", "digestMismatch", "entrypointMissing",
+            "staleFallbackVerified",
             "versionMismatch", "webContentProcessTerminated",
             "navigationStarted", "navigationFinished", "fallbackStarted", "fallbackSucceeded", "fallbackUnavailable",
             "pageReady", "pageVisible", "keyElementMissing", "scriptError", "resourceError", "apiSucceeded",

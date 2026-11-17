@@ -70,6 +70,23 @@ public class WebBrowserViewModel: ViewModel {
         let (configuration, bridge) = WKWebViewConfiguration.createDefault()
         self.jsBridge = bridge
 
+        #if DEBUG
+        // Fixture-driven E2E parity with WebViewController: the immersive
+        // PWA browser is a second WebView creation path and must honor the
+        // same test-only bootstrap script, or offline-fixture pages silently
+        // fall through to the real network.
+        if let debugBootstrapScript = HTMLAppOfflineFallbackRuntime.debugBootstrapUserScript,
+           !debugBootstrapScript.isEmpty {
+            configuration.userContentController.addUserScript(
+                WKUserScript(
+                    source: debugBootstrapScript,
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: true
+                )
+            )
+        }
+        #endif
+
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         self.webView.allowsBackForwardNavigationGestures = true
 
