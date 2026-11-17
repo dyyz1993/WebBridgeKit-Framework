@@ -45,17 +45,16 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
     private var userGestureRecognizer: WBKUserGestureRecognizer?
     var userGestureValidationOverride: (() -> Bool)?
-    private var managedAppID: String?
+    private(set) var managedAppID: String?
     private var managedDocumentURL: URL?
-    private var managedLaunchPageURL: URL?
-    private let offlinePackageLocator: HTMLAppOfflinePackageLocator
+    private(set) var managedLaunchPageURL: URL?
+    let offlinePackageLocator: HTMLAppOfflinePackageLocator
     public weak var permissionConsentPresenter: HTMLAppPermissionConsentPresenting?
-    private let trustRegistry: HTMLAppTrustRegistry
+    let trustRegistry: HTMLAppTrustRegistry
     private let permissionLedger: HTMLAppPermissionLedger
     private let nativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding
     private let capabilityGateway: HTMLAppCapabilityGateway
-    private let offlineFallbackSignatureVerifier: ((HTMLAppManifest) -> Bool)?
-    private let isOfflineProvider: (() -> Bool)?
+    let offlineFallbackSignatureVerifier: ((HTMLAppManifest) -> Bool)?, isOfflineProvider: (() -> Bool)?
     private let gatewayIdentity: String?
     private struct PendingAuthorization {
         let subject: HTMLAppPermissionSubject
@@ -206,16 +205,14 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
         nativeAuthorizationProvider: HTMLAppNativeAuthorizationProviding,
         gatewayIdentity: String? = "test-gateway",
         offlinePackageLocator: HTMLAppOfflinePackageLocator = HTMLAppOfflinePackageLocator(),
-        offlineFallbackSignatureVerifier: ((HTMLAppManifest) -> Bool)? = nil,
-        isOfflineProvider: (() -> Bool)? = nil
+        offlineFallbackSignatureVerifier: ((HTMLAppManifest) -> Bool)? = nil, isOfflineProvider: (() -> Bool)? = nil
     ) {
         self.trustRegistry = trustRegistry
         self.permissionLedger = permissionLedger
         self.nativeAuthorizationProvider = nativeAuthorizationProvider
         self.gatewayIdentity = gatewayIdentity
         self.offlinePackageLocator = offlinePackageLocator
-        self.offlineFallbackSignatureVerifier = offlineFallbackSignatureVerifier
-        self.isOfflineProvider = isOfflineProvider
+        self.offlineFallbackSignatureVerifier = offlineFallbackSignatureVerifier; self.isOfflineProvider = isOfflineProvider
         capabilityGateway = HTMLAppCapabilityGateway(
             trustRegistry: trustRegistry,
             permissionLedger: permissionLedger,
@@ -478,29 +475,6 @@ public class WebJavaScriptBridge: NSObject, WKScriptMessageHandler {
                 completion(result, callbackId)
             }
         }
-    }
-
-    /// Internal so the test target can exercise managed page identity without
-    /// a live WKWebView; behavior is identical to production callers.
-    func effectiveManagedDocumentURL(_ current: URL?) -> URL? {
-        guard let current, current.isFileURL else { return current }
-        guard let appID = managedAppID, let manifest = trustRegistry.manifest(for: appID) else { return nil }
-        if let mapped = offlinePackageLocator.logicalDocumentURL(for: current, parent: manifest, launchPage: managedLaunchPageURL) {
-            return mapped
-        }
-        // Offline fallback: when the device has no network and the installed
-        // stale package re-proves itself against its persisted signed parent
-        // manifest, keep granting it page identity so bridge capability
-        // declarations and grants stay consistent with the strong launch.
-        guard let isOfflineProvider, isOfflineProvider(),
-              offlineFallbackSignatureVerifier != nil else { return nil }
-        return offlinePackageLocator.logicalDocumentURL(
-            for: current,
-            parent: manifest,
-            launchPage: managedLaunchPageURL,
-            offlineFallback: true,
-            signatureVerifier: offlineFallbackSignatureVerifier
-        )
     }
 
     /// Reports only the current document's signed declarations and grants.
