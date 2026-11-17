@@ -60,6 +60,10 @@ public struct InstalledHTMLAppPackage: Codable, Equatable, Sendable {
     public let directoryName: String
     public let resourceManifestSHA256: String
     public let installedAt: Date
+    /// Signed parent manifest that authorized this installation. Present only
+    /// for installs recorded after this field shipped; older metadata decodes
+    /// as nil and can never qualify for an offline stale-version fallback.
+    public let signedParentManifest: HTMLAppManifest?
 
     public init(
         appID: String,
@@ -67,7 +71,8 @@ public struct InstalledHTMLAppPackage: Codable, Equatable, Sendable {
         entrypoint: String,
         directoryName: String,
         resourceManifestSHA256: String,
-        installedAt: Date
+        installedAt: Date,
+        signedParentManifest: HTMLAppManifest? = nil
     ) {
         self.appID = appID
         self.version = version
@@ -75,6 +80,7 @@ public struct InstalledHTMLAppPackage: Codable, Equatable, Sendable {
         self.directoryName = directoryName
         self.resourceManifestSHA256 = resourceManifestSHA256
         self.installedAt = installedAt
+        self.signedParentManifest = signedParentManifest
     }
 }
 

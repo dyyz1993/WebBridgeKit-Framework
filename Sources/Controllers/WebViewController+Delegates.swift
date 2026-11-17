@@ -20,6 +20,19 @@ extension WebViewController {
         config.dataDetectorTypes = []
         DrelWebRuntimeContract.install(on: config)
 
+#if DEBUG
+        if let debugBootstrapScript = HTMLAppOfflineFallbackRuntime.debugBootstrapUserScript,
+           !debugBootstrapScript.isEmpty {
+            config.userContentController.addUserScript(
+                WKUserScript(
+                    source: debugBootstrapScript,
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: true
+                )
+            )
+        }
+#endif
+
         ManifestURLSchemeHandler.register(to: config, scheme: "wb-resource")
         StructuredLogger.shared.info("[OK] [ManifestCache] Registered wb-resource:// URLSchemeHandler", category: .cache)
 

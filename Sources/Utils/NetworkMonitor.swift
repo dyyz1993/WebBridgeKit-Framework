@@ -27,11 +27,40 @@ public class NetworkMonitor {
 
     // MARK: - Properties
 
-    /// Current network connection status
-    private(set) public var isConnected: Bool = false
+    /// Backing storage for the connectivity snapshot. Read access goes
+    /// through the lock-protected computed properties below.
+    private var _isConnected: Bool = false
+    private var _isConnectivityKnown: Bool = false
+    private var _connectionType: ConnectionType = .none
 
-    /// Current connection type
-    private(set) public var connectionType: ConnectionType = .none
+    /// Current network connection status (lock-protected snapshot).
+    public var isConnected: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _isConnected
+    }
+
+    /// True once the path monitor delivered its first update. Before that the
+    /// connectivity state is unknown: isConnected still carries its initial
+    /// false and callers must not treat it as a confirmed offline condition.
+    /// (Lock-protected snapshot.)
+    public var isConnectivityKnown: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _isConnectivityKnown
+    }
+
+    /// Current connection type (lock-protected snapshot).
+    public var connectionType: ConnectionType {
+        lock.lock()
+        defer { lock.unlock() }
+        return _connectionType
+    }
+
+    /// One-shot callbacks invoked exactly once when the first authoritative
+    /// path sample arrives (or immediately if it already has). Registered via
+    /// onFirstConnectivitySample.
+    private var firstSampleCallbacks: [() -> Void] = []
 
     /// Network path monitor
     private var pathMonitor: NWPathMonitor
@@ -118,7 +147,7 @@ public class NetworkMonitor {
         lock.lock()
         defer { lock.unlock() }
 
-        return connectionType == .cellular
+        return _connectionType == .cellular
     }
 
     /// Check if currently on WiFi
@@ -127,7 +156,7 @@ public class NetworkMonitor {
         lock.lock()
         defer { lock.unlock() }
 
-        return connectionType == .wifi
+        return _connectionType == .wifi
     }
 
     /// Get current network status description
@@ -136,11 +165,11 @@ public class NetworkMonitor {
         lock.lock()
         defer { lock.unlock() }
 
-        if !isConnected {
+        if !_isConnected {
             return "Offline"
         }
 
-        switch connectionType {
+        switch _connectionType {
         case .wifi:
             return "WiFi"
         case .cellular:
@@ -149,6 +178,60 @@ public class NetworkMonitor {
             return "Ethernet"
         case .none:
             return "Unknown"
+        }
+    }
+
+    /// Thread-safe snapshot of the connectivity knowledge.
+    public func connectivitySnapshot() -> (isConnectivityKnown: Bool, isConnected: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (_isConnectivityKnown, _isConnected)
+    }
+
+    /// Calls callback exactly once: immediately when the first authoritative
+    /// path sample has already arrived, otherwise as soon as it does. Unlike
+    /// the status-change callbacks this also fires when the first sample
+    /// reports an offline state.
+    public func onFirstConnectivitySample(_ callback: @escaping () -> Void) {
+        var invokeNow = false
+        lock.lock()
+        if _isConnectivityKnown {
+            invokeNow = true
+        } else {
+            firstSampleCallbacks.append(callback)
+        }
+        lock.unlock()
+        if invokeNow {
+            callback()
+        }
+    }
+
+    /// Suspends until the first authoritative path sample arrives or the
+    /// timeout elapses, whichever happens first. No polling is involved: the
+    /// wait rides on the one-shot first-sample notification and races it
+    /// against a deadline work item, each resuming the continuation exactly
+    /// once.
+    public func waitFirstConnectivitySample(timeout: TimeInterval) async {
+        if connectivitySnapshot().isConnectivityKnown {
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let gate = NSLock()
+            var resumed = false
+            let resumeOnce = {
+                gate.lock()
+                let shouldResume = !resumed
+                resumed = true
+                gate.unlock()
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+            onFirstConnectivitySample { resumeOnce() }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + timeout,
+                execute: DispatchWorkItem { resumeOnce() }
+            )
         }
     }
 
@@ -165,9 +248,16 @@ public class NetworkMonitor {
             var changed = false
 
             self.lock.lock()
-            if self.isConnected != newIsConnected || self.connectionType != newConnectionType {
-                self.isConnected = newIsConnected
-                self.connectionType = newConnectionType
+            let wasFirstSample = !self._isConnectivityKnown
+            self._isConnectivityKnown = true
+            var firstSampleCallbacks: [() -> Void] = []
+            if wasFirstSample {
+                firstSampleCallbacks = self.firstSampleCallbacks
+                self.firstSampleCallbacks = []
+            }
+            if self._isConnected != newIsConnected || self._connectionType != newConnectionType {
+                self._isConnected = newIsConnected
+                self._connectionType = newConnectionType
                 changed = true
 
                 // Log the change
@@ -177,21 +267,22 @@ public class NetworkMonitor {
             }
             self.lock.unlock()
 
+            // First-sample subscribers must fire even when the value did not
+            // change (an offline first sample leaves isConnected false).
+            if wasFirstSample {
+                firstSampleCallbacks.forEach { $0() }
+            }
+
             // Notify callbacks if status changed
             if changed {
                 self.notifyStatusChangeCallbacks(isConnected: newIsConnected, connectionType: newConnectionType)
             }
         }
 
-        // Initialize with current status
-        // Note: currentPath is not optional in modern Network framework
-        let currentPath = pathMonitor.currentPath
-        isConnected = currentPath.status == .satisfied
-        connectionType = determineConnectionType(from: currentPath)
-
-        let statusText = isConnected ? "Connected" : "Disconnected"
-        let typeText = getConnectionTypeText(connectionType)
-        NSLog("[WEB] [NetworkMonitor] Initial status: \(statusText) (\(typeText))")
+        // Connectivity is initialized lazily: reading currentPath before the
+        // monitor has started yields an unsatisfied placeholder, which would
+        // misreport a cold start as offline. The first authoritative value
+        // arrives with the first path update and flips isConnectivityKnown.
     }
 
     /// Determine connection type from NWPath
@@ -276,8 +367,8 @@ extension NetworkMonitor {
     /// - Throws: WebBridgeError.networkUnavailable if not connected
     public func ensureNetworkAvailable() throws {
         lock.lock()
-        let connected = isConnected
-        let type = connectionType
+        let connected = _isConnected
+        let type = _connectionType
         lock.unlock()
 
         guard connected else {
