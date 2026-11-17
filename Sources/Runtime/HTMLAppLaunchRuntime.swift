@@ -18,6 +18,45 @@ public enum HTMLAppOfflineMode: String, Codable, Equatable, Sendable {
     case strong
 }
 
+/// Network assumption a launch resolution may rely on.
+///
+/// online keeps the production policy: strong-offline launches require the
+/// installed package to match the current signed manifest version, so updated
+/// manifests refresh on the next successful load. offlineFallback asserts the
+/// caller verified the device currently has no usable network; only then may
+/// an older installed package launch, and exclusively after its persisted
+/// signed parent manifest passes the injected signature verifier and its full
+/// digest chain re-proves the on-disk content. Without an injected verifier
+/// the fallback never engages.
+public enum HTMLAppLaunchNetworkPolicy: Equatable, Sendable {
+    case online
+    case offlineFallback
+}
+
+/// Host-installable hooks for the offline stale-package fallback.
+///
+/// WebJavaScriptBridge's convenience initializer reads these, so every pooled
+/// or directly created bridge shares the same gateway trust anchor and
+/// offline provider without per-call wiring. Hosts set both once at launch;
+/// nil (the default) keeps the fallback disabled for that bridge.
+public enum HTMLAppOfflineFallbackRuntime {
+    /// Gateway public-key verifier, see
+    /// HTMLAppGatewayOnboardingService.offlineFallbackSignatureVerifier.
+    public static var signatureVerifier: ((HTMLAppManifest) -> Bool)?
+
+    /// Returns true only for a confirmed offline condition; an unknown
+    /// cold-start sample must return false.
+    public static var isOfflineProvider: (() -> Bool)?
+
+#if DEBUG
+    /// Test-only bootstrap user script for the browser main frame, compiled
+    /// out of production builds. Fixture-driven UI tests inject an
+    /// unreachable API base so offline behaviour is exercised without
+    /// touching device networking.
+    public static var debugBootstrapUserScript: String?
+#endif
+}
+
 public struct HTMLAppLaunchContext: Codable, Equatable, Sendable {
     public let appID: String
     public let route: String
@@ -126,19 +165,23 @@ public enum HTMLAppLaunchError: Error, Equatable, LocalizedError {
 public final class HTMLAppLaunchResolver {
     private let trustRegistry: HTMLAppTrustRegistry
     private let packageLocator: HTMLAppOfflinePackageLocator
+    private let signatureVerifier: ((HTMLAppManifest) -> Bool)?
 
     public init(
         trustRegistry: HTMLAppTrustRegistry = HTMLAppTrustRegistry(),
-        packageLocator: HTMLAppOfflinePackageLocator = HTMLAppOfflinePackageLocator()
+        packageLocator: HTMLAppOfflinePackageLocator = HTMLAppOfflinePackageLocator(),
+        signatureVerifier: ((HTMLAppManifest) -> Bool)? = nil
     ) {
         self.trustRegistry = trustRegistry
         self.packageLocator = packageLocator
+        self.signatureVerifier = signatureVerifier
     }
 
     public func resolve(
         envelope: HTMLAppPushEnvelope,
         source: HTMLAppLaunchSource = .notification,
-        now: Date = Date()
+        now: Date = Date(),
+        networkPolicy: HTMLAppLaunchNetworkPolicy = .online
     ) throws -> HTMLAppLaunchTarget {
         guard let manifest = trustRegistry.manifest(for: envelope.appID) else {
             throw HTMLAppLaunchError.appNotRegistered(envelope.appID)
@@ -150,7 +193,8 @@ public final class HTMLAppLaunchResolver {
             manifest: manifest,
             route: envelope.route,
             parameters: envelope.parameters,
-            source: source
+            source: source,
+            networkPolicy: networkPolicy
         )
     }
 
@@ -158,7 +202,8 @@ public final class HTMLAppLaunchResolver {
         appID: String,
         route: String,
         parameters: [String: String] = [:],
-        source: HTMLAppLaunchSource = .direct
+        source: HTMLAppLaunchSource = .direct,
+        networkPolicy: HTMLAppLaunchNetworkPolicy = .online
     ) throws -> HTMLAppLaunchTarget {
         guard let manifest = trustRegistry.manifest(for: appID) else {
             throw HTMLAppLaunchError.appNotRegistered(appID)
@@ -166,14 +211,15 @@ public final class HTMLAppLaunchResolver {
         guard manifest.allows(route: route) else {
             throw HTMLAppLaunchError.invalidEnvelope
         }
-        return try resolve(manifest: manifest, route: route, parameters: parameters, source: source)
+        return try resolve(manifest: manifest, route: route, parameters: parameters, source: source, networkPolicy: networkPolicy)
     }
 
     private func resolve(
         manifest: HTMLAppManifest,
         route: String,
         parameters: [String: String],
-        source: HTMLAppLaunchSource
+        source: HTMLAppLaunchSource,
+        networkPolicy: HTMLAppLaunchNetworkPolicy = .online
     ) throws -> HTMLAppLaunchTarget {
         guard let startURL = URL(string: manifest.startURL),
               var components = URLComponents(url: startURL, resolvingAgainstBaseURL: false) else {
@@ -207,6 +253,20 @@ public final class HTMLAppLaunchResolver {
                   package.version == offlineCache.version,
                   package.resourceManifestSHA256 == offlineCache.resourceManifestSHA256,
                   let entrypoint = try? packageLocator.entrypointURL(for: package) {
+            offlineMode = .strong
+            installedPackageURL = entrypoint
+        } else if networkPolicy == .offlineFallback,
+                  offlineCache.isStrongOfflineEligible,
+                  let package = packageLocator.verifiedStaleOfflinePackage(
+                      appID: manifest.appID,
+                      signatureVerifier: signatureVerifier
+                  ),
+                  let entrypoint = try? packageLocator.entrypointURL(for: package) {
+            // Offline with a newer signed manifest deployed: serve the
+            // installed package only after the persisted signed parent
+            // manifest passes the signature verifier and the digest chain
+            // re-proves the on-disk content. Anything unprovable stays on
+            // the network page.
             offlineMode = .strong
             installedPackageURL = entrypoint
         } else {

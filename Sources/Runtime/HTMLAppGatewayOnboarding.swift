@@ -414,6 +414,29 @@ public final class HTMLAppGatewayOnboardingService {
         let verify: (HTMLAppManifest) -> Bool
     }
 
+    /// Builds the offline stale-package signature verifier from gateway trust
+    /// anchors. Returns nil for gateways without a configured public key:
+    /// without a cryptographic trust anchor a stale package can never be
+    /// independently proven, so offline fallback must stay disabled.
+    public static func offlineFallbackSignatureVerifier(
+        publicKeyID: String?,
+        publicKey: String?
+    ) -> ((HTMLAppManifest) -> Bool)? {
+        guard let keyID = publicKeyID,
+              let publicKeyValue = publicKey,
+              let publicKeyData = Self.decodeBase64URL(publicKeyValue),
+              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData) else {
+            return nil
+        }
+        return { manifest in
+            guard let signature = manifest.signature,
+                  signature.keyID == keyID,
+                  let signatureData = Self.decodeBase64URL(signature.value),
+                  let payload = try? Self.canonicalUnsignedPayload(manifest) else { return false }
+            return publicKey.isValidSignature(signatureData, for: payload)
+        }
+    }
+
     private static func canonicalUnsignedPayload(_ manifest: HTMLAppManifest) throws -> Data {
         let unsigned = HTMLAppManifest(
             schemaVersion: manifest.schemaVersion,
