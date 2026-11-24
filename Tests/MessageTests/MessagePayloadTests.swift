@@ -280,7 +280,7 @@ final class MessagePayloadTests: XCTestCase {
                 ],
             "responseMode": "thirdParty",
             "submit": [
-                "url": "https://approve.xbrowser.dev/api/review",
+                "url": "https://fixture.example.invalid/api/review",
                 "ticket": "ticket-123",
             ],
             ],
@@ -297,7 +297,7 @@ final class MessagePayloadTests: XCTestCase {
         XCTAssertEqual(payload.presentation, .native)
         XCTAssertEqual(payload.approval?.actions.map(\.id), ["approve", "reject"])
         XCTAssertEqual(payload.approval?.submit, MessageApprovalSubmit(
-            url: "https://approve.xbrowser.dev/api/review",
+            url: "https://fixture.example.invalid/api/review",
             ticket: "ticket-123"
         ))
         XCTAssertTrue(payload.hasNativeApprovalActions)

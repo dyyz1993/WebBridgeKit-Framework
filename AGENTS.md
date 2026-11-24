@@ -45,14 +45,14 @@ both QR-code import and paste-based import for gateway configuration.
   different app identity.
 - Show the imported host and endpoints for explicit user confirmation. Users can
   edit, switch, or remove a configured gateway at any time.
-- Verify the configured gateway locally first. Deploy to legacy-infra only after the
+- Verify the configured gateway locally first. Deploy to <remote-root> only after the
   server exposes the generic gateway contract and local/simulator regression is
   green.
 
 ## Bark Reference Implementation
 
 A local checkout of the open-source Bark app lives at
-`/Users/developer/Project/temporary/Bark/Bark/`. WebBridgeKit's
+`<local-bark-checkout>`. WebBridgeKit's
 Bark-compatible push surface is modeled on it — when push behavior, sound
 handling, or example-UX questions come up, consult this source first instead
 of guessing.
@@ -79,12 +79,12 @@ Key references:
   Bark synthesizes 30-second looped versions of each sound so `call=1`
   keeps ringing like a phone call.
 
-## APNs Push Delivery Rules (legacy-infra WebBridgeServer)
+## APNs Push Delivery Rules (Deployed WebBridgeServer)
 
 Learned the hard way on 2026-08-15: the server answered `{"code":200,"Push sent"}` for weeks
 while Apple silently rejected every request. Rules that must not regress:
 
-- **APNs only speaks HTTP/2.** The AsyncHTTPClient version pinned on legacy-infra has no HTTP/2
+- **APNs only speaks HTTP/2.** The AsyncHTTPClient version pinned on the deployment host has no HTTP/2
   support, so `APNsService` sends via `URLSession` (libcurl-backed, negotiates h2 via ALPN).
   Do not "simplify" this back to `HTTPClient` — HTTP/1.1 requests get `403` with no visible
   route error.
@@ -95,7 +95,7 @@ while Apple silently rejected every request. Rules that must not regress:
   mint fresh tokens count against the same key.
 - **`Push sent (200)` only means the route accepted the request.** Real delivery failures
   print `APNs error: <code>` / `APNs send error:` to stdout, which is block-buffered under
-  supervisord — check `/var/log/supervisor/webbridgeserver.log` and expect flush delay.
+  supervisord — check `<service-log>` and expect flush delay.
 - **Isolating faults:** sign the JWT locally (python + cryptography, ES256 raw r||s) and
   `curl --http2 https://api.sandbox.push.apple.com/3/device/<token>` with the real device
   token. A fake token should return `400 BadDeviceToken` (auth OK); `403` means the
@@ -103,8 +103,8 @@ while Apple silently rejected every request. Rules that must not regress:
   left correctly.
 - **Device registrations persist** to `Server/data/device-registrations.json` (created on
   first register). Restarting the server is safe; losing the file means every phone must
-  re-activate push. 2026-08-19: legacy-infra now runs `APNS_ENVIRONMENT=production`
-  (supervisord.conf) because the daily-driver phone installed the TestFlight build, whose
+  re-activate push. 2026-08-19: the deployment host runs `APNS_ENVIRONMENT=production`
+  in its service configuration because the daily-driver phone installed the TestFlight build, whose
   tokens are production-only — sandbox tokens sent to the production endpoint (and vice
   versa) fail with `400 BadDeviceToken`. All 11 stale sandbox tokens were pruned from the
   registrations file (backup `device-registrations.json.bak-sandbox-cleanup`); note two
@@ -147,7 +147,7 @@ reveal the decision.
 **Layer 1 — server send log** (proves what Apple received):
 
 ```bash
-ssh legacy-infra-jump "grep -a '\[APNs\] sending' /var/log/supervisor/webbridgeserver-error.log | tail -5"
+ssh <ssh-host> "grep -a '\[APNs\] sending' <service-error-log> | tail -5"
 # → "[APNs] sending token=…d06e69 title=X sound=alarm level=nil"
 ```
 
@@ -205,7 +205,7 @@ UI-related development and verification must default to the iOS Simulator:
 排查与修复必须按此顺序收敛，不得跳级请求用户真机：
 
 1. **能自动化的全部自动化**：本地/模拟器构建、单元与 UI 测试、`Server && swift test`、
-   各 verify 脚本、模拟器安装+启动+`scan-crash-logs.sh`、以及可直连 legacy-infra 的服务端
+   各 verify 脚本、模拟器安装+启动+`scan-crash-logs.sh`、以及可直连 <gateway-host> 的服务端
    行为验证（curl 假设备 key + 服务端日志第一层证据）。这些都绿了才进入下一步。
 2. **明确列出「只有用户能做」的环节**并说明原因（如 TestFlight 上传需要 App Store Connect
    凭据；APNs 锁屏/后台投递、来电式响铃、China 网络弹窗只能真机验证）。
@@ -231,32 +231,32 @@ Three local services must be running for simulator development and local regress
 Do **not** use one URL for every workflow. Pick the endpoint by device and evidence type:
 
 - **Simulator/local regression**: start `scripts/services.sh` and use `localhost` (`:8080`, `:8081`, `:8083`).
-- **Physical iPhone / Bark / public backend verification**: use `https://wbk.legacy-infra.example.invalid:8443`.
-- **Physical iPhone cache and JSBridge fixture pages**: use `https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/`.
+- **Physical iPhone / Bark / public backend verification**: use `https://gateway.example.invalid`.
+- **Physical iPhone cache and JSBridge fixture pages**: use `https://fixture.example.invalid/`.
 - **HTML prototype comparison**: use local `http://localhost:8083` unless a specific public prototype deployment is being verified.
 
 Quick rule:
 
-- If the app is installed on the user's physical iPhone, prefer the public legacy-infra URLs because the phone cannot reliably reach agent-local `localhost`.
+- If the app is installed on the user's physical iPhone, prefer the public deployment URLs because the phone cannot reliably reach agent-local `localhost`.
 - If the app is running in Simulator, CI, or local Xcode regression, keep using `scripts/services.sh` and the three local ports because tests depend on deterministic local fixtures and logs.
-- If the task says "Bark", "real push", "public server", "phone", or "legacy-infra", run the legacy-infra verification scripts instead of only checking local services.
+- If the task says "Bark", "real push", "public server", or "phone", run the public deployment verification scripts instead of only checking local services.
 
-### Public legacy-infra Backend
+### Public Deployment Backend
 
 Do **not** replace the local services above with the public URL. They serve different verification scopes.
 
 ### Server Version First（排查第一步）
 
-legacy-infra 是手工 rsync 的源码部署（`/root/WebBridgeKit` 无 git remote），「服务器没更新」曾多次
+The public host uses a manually synced source deployment at `<remote-root>` without a git remote. 「服务器没更新」曾多次
 造成假差异排查（2026-08-20：撤回/清角标卡 400、passive 带铃声，都是手机测到旧服务端代码）。
 规则：
 
 - 服务端在 `/health` 暴露 `version` 字段，来源 `Server/Sources/WebBridgeServer/Models/ServerVersion.swift`
-  的 `ServerVersion.current`。**每次向 legacy-infra 部署行为变更后必须 bump 该常量**并在注释里记一行变更摘要。
+  的 `ServerVersion.current`。**每次向部署主机发布行为变更后必须 bump 该常量**并在注释里记一行变更摘要。
 - **排查任何「前端/手机行为与服务端代码不一致」的问题时，第一步先核对版本**：
-  `curl -k https://wbk.legacy-infra.example.invalid:8443/health | grep version`
+  `curl -k https://gateway.example.invalid/health | grep version`
   版本不对 = 服务端没部署新代码，先部署再复测，不要直接怀疑客户端。
-- `tools/verify-legacy-infra-backend.sh` 会断言 `/health` 的 `version` 非空；本地 `curl http://localhost:8080/health`
+- The public backend verification script asserts that `/health` exposes a non-empty `version`; locally, `curl http://localhost:8080/health`
   同样适用。推送渲染目录页（`test_resources/push-render-catalog.html`）页脚会实时显示服务端版本。
 - 客户端修复（NSE、App 侧）与服务端修复是两条发布线：服务端部署 ≠ 手机更新。排查时分别核对
   `/health` 版本（服务端线）和 TestFlight 构建时间（客户端线）。
@@ -266,26 +266,26 @@ legacy-infra 是手工 rsync 的源码部署（`/root/WebBridgeKit` 无 git remo
 | Local backend | http://localhost:8080 | Simulator tests, local route debugging, cache/manifest/command regression | Proving public deployment or phone reachability |
 | Local test HTTP | http://localhost:8081 | Static fixtures for cache tests and offline/cache HTML validation | Production/Bark route checks |
 | Local prototype | http://localhost:8083 | HTML design prototype comparison | Backend/API validation |
-| Public legacy-infra Swift backend | https://wbk.legacy-infra.example.invalid:8443 | Real-phone/server config, Bark-compatible route checks, public `/health`, `/register`, `/push`, `/test`, `/api/v1/commands` verification | Local fixture tests, prototype viewing, APNs delivery proof by itself |
-| Public legacy-infra static fixtures | https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/ | Real-phone cache/offline/JSBridge demo pages and externally reachable WebView fixtures | Backend, Bark, push, command, or admin route checks |
-| Public legacy-infra Node admin console | https://wbk.legacy-infra.example.invalid:8443/admin | Real-phone/browser admin console checks; public `/admin`, `/admin-push`, `/admin/api/*`, `/ws/status`, `/messages`, `/packages` verification | Local source-only admin checks |
-| Public tx HTML app gateway | https://cloak.xbrowser.dev:5801 | Production-style HTTPS gateway import, signed HTML app manifests, and physical-phone gateway reachability | APNs delivery, legacy-infra Bark routes, or static fixture hosting |
-| Local Node admin console | http://127.0.0.1:{dynamic-port} | Source-level admin console checks for `/admin`, `/admin-push`, `/admin/api/*`, `/ws/status`, `/messages`, `/packages` | Proving the Node admin console is deployed on public legacy-infra |
+| Public Swift backend | https://gateway.example.invalid | Real-phone/server config, Bark-compatible route checks, public `/health`, `/register`, `/push`, `/test`, `/api/v1/commands` verification | Local fixture tests, prototype viewing, APNs delivery proof by itself |
+| Public static fixtures | https://fixture.example.invalid/ | Real-phone cache/offline/JSBridge demo pages and externally reachable WebView fixtures | Backend, Bark, push, command, or admin route checks |
+| Public Node admin console | https://gateway.example.invalid<admin-path> | Real-phone/browser admin console checks; public `/admin`, `/admin-push`, `/admin/api/*`, `/ws/status`, `/messages`, `/packages` verification | Local source-only admin checks |
+| Public HTML app gateway | https://gateway.example.invalid | Production-style HTTPS gateway import, signed HTML app manifests, and physical-phone gateway reachability | APNs delivery, deployed Bark routes, or static fixture hosting |
+| Local Node admin console | http://127.0.0.1:{dynamic-port} | Source-level admin console checks for `/admin`, `/admin-push`, `/admin/api/*`, `/ws/status`, `/messages`, `/packages` | Proving the Node admin console is deployed publicly |
 
 Use the public URL when validating the deployed backend or configuring the app on a physical iPhone:
 
 ```bash
-bash tools/verify-legacy-infra-backend.sh
-WBK_legacy-infra_URL=https://wbk.legacy-infra.example.invalid:8443 bash tools/verify-legacy-infra-backend.sh
-bash tools/verify-legacy-infra-supervision.sh
+bash tools/verify-public-backend.sh
+WBK_PUBLIC_BACKEND_URL=https://gateway.example.invalid bash tools/verify-public-backend.sh
+bash tools/verify-deployment-supervision.sh
 bash tools/verify-node-admin-local.sh
-curl -k https://wbk.legacy-infra.example.invalid:8443/health
-curl -k https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/bridge-hub.html
+curl -k https://gateway.example.invalid/health
+curl -k https://fixture.example.invalid/bridge-hub.html
 ```
 
-The public legacy-infra backend check is route-level evidence only. It does not prove APNs registration, real Bark delivery, lock-screen/background notification behavior, phone LAN behavior, or process supervision. Use `tools/verify-legacy-infra-supervision.sh` for SSH-level process supervision evidence.
+The public backend check is route-level evidence only. It does not prove APNs registration, real Bark delivery, lock-screen/background notification behavior, phone LAN behavior, or process supervision. Use the deployment supervision verification script for SSH-level process supervision evidence.
 
-`tools/verify-node-admin-local.sh` starts `Server/node/server.js` on a temporary local port and verifies the Node admin console routes locally. Public deployment is separately proven by `tools/verify-legacy-infra-backend.sh`, which checks the `wbk.legacy-infra` admin paths, and `tools/verify-legacy-infra-supervision.sh`, which checks the supervised `webbridge-node-admin` process.
+`tools/verify-node-admin-local.sh` starts `Server/node/server.js` on a temporary local port and verifies the Node admin console routes locally. Public deployment is separately proven by the public backend verification script, which checks `<admin-path>` routes, and the deployment supervision verification script, which checks the supervised `<service>` process.
 
 ### Management
 
@@ -302,7 +302,7 @@ Run `bash scripts/services.sh` without args for full usage.
 
 `services.sh start/restart` uses per-user `launchctl` jobs under `.services/*.plist`, so the services keep running across separate agent shell commands. Use `bash scripts/services.sh stop` when the local verification session is finished.
 
-**IMPORTANT**: Always run `bash scripts/services.sh start` before testing the app in simulator. The local backend is required for simulator push-route, command, manifest, cache, and prototype workflows. Use `tools/verify-legacy-infra-backend.sh` separately for public deployment evidence.
+**IMPORTANT**: Always run `bash scripts/services.sh start` before testing the app in simulator. The local backend is required for simulator push-route, command, manifest, cache, and prototype workflows. Use the public backend verification script separately for public deployment evidence.
 
 ## Build & Run
 
@@ -495,8 +495,8 @@ Use these scripts as the repeatable evidence source before declaring a module "a
 | `bash tools/run-cache-regression.sh` | Cache module regression: services, `CacheTests`, cache handler tests, cache dashboard UI tests | `Summary: ... failed` must be 0 | Requires a booted simulator for the UI portion |
 | `bash tools/run-jsbridge-regression.sh` | JSBridge regression: core bridge tests, `BridgeTests`, handler tests, functional UI tests | `Summary: ... failed` must be 0 | Requires a booted simulator for the UI portion |
 | `xcodebuild test ... -only-testing:SuperAppUITests/ModuleAvailabilityTests` | Current information architecture/module availability UI gate | 14 tests, 0 failures | Verifies `Web`, `Push`, `Bridge`, real WebView JSBridge Promise execution, `Settings`, Debug Center concrete child entries, Debug Center diagnostics/network/manifest child-tool content/actions, Deep Links, About/Legal, appearance preferences, remember-last-app, iOS Settings handoff |
-| `bash tools/verify-module-availability-report.sh` | Guards `docs/verification/module-availability-verification.md` coverage: required sections, core modules, all `SettingsAction` entries, real WebView JSBridge evidence, Debug Center concrete-screen/content/action evidence, legacy-infra fixture evidence, legacy-infra command token semantics, and known unavailable markers | `100 passed, 0 failed` | Run after changing Settings navigation, module IA, availability docs, public fixture checks, legacy-infra command checks, or known unavailable status |
-| `cd Server && swift test` | Swift Hummingbird backend route semantics | All `Manifest Routes`, `Push Routes`, `Command Routes` tests pass | Does not prove public legacy-infra deployment or APNs delivery |
+| `bash tools/verify-module-availability-report.sh` | Guards `docs/verification/module-availability-verification.md` coverage: required sections, core modules, all `SettingsAction` entries, real WebView JSBridge evidence, Debug Center concrete-screen/content/action evidence, public fixture evidence, deployed command token semantics, and known unavailable markers | `100 passed, 0 failed` | Run after changing Settings navigation, module IA, availability docs, public fixture checks, deployed command checks, or known unavailable status |
+| `cd Server && swift test` | Swift Hummingbird backend route semantics | All `Manifest Routes`, `Push Routes`, `Command Routes` tests pass | Does not prove public deployment or APNs delivery |
 
 ### UI And Visual Gates
 
@@ -513,11 +513,11 @@ Use these scripts as the repeatable evidence source before declaring a module "a
 
 | Script | Purpose | Pass Signal | Notes |
 |--------|---------|-------------|-------|
-| `bash tools/verify-legacy-infra-backend.sh` | Verifies public legacy-infra Swift backend routes, response JSON semantics, Bark-compatible GET/POST, encoded Bark query paths, command token URL-safe payload semantics, `/health` server version exposure, and public Node admin routes | `28 passed, 0 failed, 0 unavailable` | Route-level and command-token semantic evidence only; fake device token does not prove APNs delivery |
-| `WBK_GATEWAY_URL=https://cloak.xbrowser.dev:5801 bash tools/verify-open-gateway.sh` | Verifies the portable gateway document, signed HTML app manifest shape, per-app lookup, health route, and anonymous mutation rejection | `5 passed, 0 failed` | Public HTTPS gateway evidence; this still does not prove APNs delivery |
-| `bash tools/verify-legacy-infra-supervision.sh` | Verifies remote `WebBridgeServer` and `webbridge-node-admin` processes and whether they are supervised | `process=PASS, supervision=PASS, node_admin=PASS` | Requires SSH alias `legacy-infra` or `WBK_legacy-infra_SSH_HOST`; exits 1 if Swift backend or Node admin supervision is missing |
-| `bash tools/verify-legacy-infra-fixtures.sh` | Verifies public legacy-infra static fixture pages for physical-phone WebView/cache/JSBridge checks, including `bridge-hub.html`, `bridge-promise-smoke.html`, `cache-showcase.html`, `WebBridge.js`, manifest, CSS/JS/image resources | `18 passed, 0 failed` | Static reachability/content-marker evidence only; does not prove native Bridge execution, APNs delivery, or offline cache behavior on a physical iPhone |
-| `bash tools/verify-node-admin-local.sh` | Starts local `Server/node/server.js` and verifies Node admin, admin API, WebSocket status, messages, and packages routes | `11 passed, 0 failed` | Source/local evidence only; public deployment is covered by `verify-legacy-infra-backend.sh` |
+| `bash tools/verify-public-backend.sh` | Verifies public Swift backend routes, response JSON semantics, Bark-compatible GET/POST, encoded Bark query paths, command token URL-safe payload semantics, `/health` server version exposure, and public Node admin routes | `28 passed, 0 failed, 0 unavailable` | Route-level and command-token semantic evidence only; fake device token does not prove APNs delivery |
+| `WBK_GATEWAY_URL=https://gateway.example.invalid bash tools/verify-open-gateway.sh` | Verifies the portable gateway document, signed HTML app manifest shape, per-app lookup, health route, and anonymous mutation rejection | `5 passed, 0 failed` | Public HTTPS gateway evidence; this still does not prove APNs delivery |
+| `bash tools/verify-deployment-supervision.sh` | Verifies remote `WebBridgeServer` and `webbridge-node-admin` processes and whether they are supervised | `process=PASS, supervision=PASS, node_admin=PASS` | Requires `<ssh-host>` or `WBK_PUBLIC_BACKEND_SSH_HOST`; exits 1 if Swift backend or Node admin supervision is missing |
+| `bash tools/verify-public-fixtures.sh` | Verifies public static fixture pages for physical-phone WebView/cache/JSBridge checks, including `bridge-hub.html`, `bridge-promise-smoke.html`, `cache-showcase.html`, `WebBridge.js`, manifest, CSS/JS/image resources | `18 passed, 0 failed` | Static reachability/content-marker evidence only; does not prove native Bridge execution, APNs delivery, or offline cache behavior on a physical iPhone |
+| `bash tools/verify-node-admin-local.sh` | Starts local `Server/node/server.js` and verifies Node admin, admin API, WebSocket status, messages, and packages routes | `11 passed, 0 failed` | Source/local evidence only; public deployment is covered by the public backend verification script |
 | `bash tools/run-real-device-smoke.sh` | Auto-discovers paired/available iPhone, builds for device, installs, launches `com.webbridgekit.superapp` | Production pass signal: `4 passed, 0 failed`; current Personal Team evidence: `1 passed, 2 failed` | Proves physical build/install/launch only, not APNs/Bark delivery; current failure is expected until a Push-capable Apple Developer Program team/profile is used |
 | `bash tools/verify-real-device-push-readiness.sh` | Verifies real-device push prerequisites: iPhone availability, backend/supervision, app install/launch, APNs entitlement, provisioning profile Push capability, token forwarding, default Bark server | Production pass signal: `0 failed`; current Personal Team evidence: `6 passed, 3 failed, 4 manual` | Current project is expected to fail under Personal Development Teams because Push Notifications requires an Apple Developer Program team/App ID/profile with `aps-environment`; manual notification receipt items must still be observed after automatic gates pass |
 | `bash tools/run-release-gate.sh` | Release readiness: services, SwiftLint, design lint, Debug build, crash scan, Release archive, no test HTML in app bundle | `Summary: ... failed` must be 0 | Use before release/archive handoff |
@@ -527,10 +527,10 @@ Use these scripts as the repeatable evidence source before declaring a module "a
 
 - Do not mark APNs registration, Bark end-to-end delivery, lock-screen/background notification behavior, or phone-specific LAN reachability as fully available from simulator-only evidence.
 - iOS Settings handoff can be simulator-verified by proving `UIApplication.openSettingsURLString` opens `com.apple.Preferences`; require a physical confirmation only when release criteria explicitly demand a real-device Settings handoff check.
-- `tools/verify-legacy-infra-backend.sh` proves public route behavior, Node admin public routes, and command token URL-safe payload semantics. It does not prove APNs delivery to a real iPhone.
-- `tools/verify-legacy-infra-fixtures.sh` proves public static fixture reachability and content markers for `ae8fcb.legacy-infra.example.invalid:8443/test_resources`. It does not prove native Bridge execution, offline cache completion, APNs delivery, or phone-specific network behavior by itself.
-- `tools/verify-node-admin-local.sh` proves local/source Node admin route availability only. Use `tools/verify-legacy-infra-backend.sh` and `tools/verify-legacy-infra-supervision.sh` before marking public legacy-infra Node admin deployment available.
-- `tools/verify-legacy-infra-supervision.sh` proves whether the public Swift backend and Node admin have restart supervision. Current legacy-infra evidence is `process=PASS, supervision=PASS, node_admin=PASS` via supervisord; route checks and supervision checks should both stay green for production handoff.
+- `tools/verify-public-backend.sh` proves public route behavior, Node admin public routes, and command token URL-safe payload semantics. It does not prove APNs delivery to a real iPhone.
+- `tools/verify-public-fixtures.sh` proves public static fixture reachability and content markers for `fixture.example.invalid`. It does not prove native Bridge execution, offline cache completion, APNs delivery, or phone-specific network behavior by itself.
+- `tools/verify-node-admin-local.sh` proves local/source Node admin route availability only. Use `tools/verify-public-backend.sh` and `tools/verify-deployment-supervision.sh` before marking public Node admin deployment available.
+- `tools/verify-deployment-supervision.sh` proves whether the public Swift backend and Node admin have restart supervision. Current deployment evidence is `process=PASS, supervision=PASS, node_admin=PASS` via supervisord; route checks and supervision checks should both stay green for production handoff.
 - `tools/run-real-device-smoke.sh` proves the app can build, install, and launch on a paired iPhone. It does not prove notification permission, APNs token registration, or notification receipt.
 - `tools/verify-real-device-push-readiness.sh` proves automatic APNs/Bark prerequisites and separates real iPhone notification observation into MANUAL rows. Do not mark APNs/Bark end-to-end available while this script has FAIL rows.
 - `SuperApp/SuperApp.entitlements` is required for APNs production readiness. Do not remove `aps-environment` merely to make a Personal Development Team build pass; if `xcodebuild` reports that the team/profile does not support Push Notifications, mark APNs/Bark as unavailable and switch to a paid Apple Developer Program team/App ID/provisioning profile with Push Notifications enabled.
@@ -719,7 +719,7 @@ xcrun simctl launch booted com.webbridgekit.superapp --show-component-catalog
 |--------|-------------|
 | `e75dccb` | test(device): harden real-device smoke gate |
 | `ab062a2` | test(ui): verify about legal deep link path |
-| `4b2382e` | test(server): add legacy-infra backend verification gate |
+| `4b2382e` | test(server): add public backend verification gate |
 | `3608f0e` | feat(ui): add screenshot capture tests, visual check scripts, CI design lint |
 | `ef2874e` | feat(ui): v3 UI redesign — token system, 11 WBK components, 4 page redesigns (#2) |
 | `3d79ccf` | fix(ui): inbox search bar shadow + home bookmark tap opens URL instead of camera |

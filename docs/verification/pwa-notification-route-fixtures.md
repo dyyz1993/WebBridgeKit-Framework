@@ -41,7 +41,7 @@ approval route's navigation-only payload boundary.
 Do not deploy a local HTTP fixture. After all local checks are green, publish
 the two static PWA directories and their unsigned source manifests to `tx`.
 The public gateway signs the manifests dynamically, while the same HTTPS origin
-serves the PWA files at `https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/...`.
+serves the PWA files at `https://fixture.example.invalid/...`.
 Each `startURL`, allowlisted origin, and route must use that exact public
 origin. Verify gateway onboarding before physical-phone testing. APNs delivery
 remains a separate release gate that requires a Push-capable Apple Developer

@@ -2,9 +2,9 @@
   "schemaVersion": "1",
   "appId": "com.webbridgekit.fixture.chat",
   "name": "WebBridgeKit Notification Demo",
-  "startURL": "https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/pwa-notification/index.html",
+  "startURL": "http://localhost:8081/test_resources/pwa-notification/index.html",
   "allowedOrigins": [
-    "https://ae8fcb.legacy-infra.example.invalid:8443"
+    "http://localhost:8081"
   ],
   "capabilities": [
     "notification"

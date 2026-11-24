@@ -187,7 +187,7 @@ xcodebuild test -workspace WebBridgeKit.xcworkspace -scheme ModelsTests \
   -only-testing:ModelsTests/HTMLAppGatewayOnboardingTests \
   -only-testing:ModelsTests/HTMLAppRuntimeTests
 
-WBK_GATEWAY_URL=https://cloak.xbrowser.dev:5801 bash tools/verify-open-gateway.sh
+WBK_GATEWAY_URL=https://gateway.example.invalid bash tools/verify-open-gateway.sh
 bash tools/run-template-gate.sh
 swiftlint --quiet
 bash tools/ci-lint.sh

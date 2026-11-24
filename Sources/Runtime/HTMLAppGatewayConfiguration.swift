@@ -472,8 +472,6 @@ public final class HTMLAppGatewayRegistry {
            let currentHost = currentURL.host?.lowercased() {
             return host == currentHost
         }
-        let labels = host.split(separator: ".").map(String.init)
-        return (url.port == 5801 && labels == ["cloak", "xbrowser", "dev"])
-            || (url.port == 8443 && labels == ["wbk", "legacy-infra", "legacy-host", "xyz"])
+        return false
     }
 }

@@ -12,7 +12,13 @@ final class PushCipherContractTests: XCTestCase {
     /// Fixed vector: key 3ODfqVpzY+MOyn+i0oOMPg== , nonce 00..0B,
     /// plaintext JSON with title/body/sound/contentType/verificationCode.
     private static let vectorCiphertext =
-        "AAECAwQFBgcICQoL7QDIFoZ2P6lWoEsVFVFYzVxila6Rec5+C0q8x+kwTCkNOsIhCxFuhfqZ3P+GuOYD3iEISSGd2htF5q+9+fNRT29e/FhX4BBTrQBYM1bCHi7IszRfzMicW3YBReqSin7q/pel0sdX87KKBi4CM9x9OwiSzQZtm2BVQQ6xBrKV9GxuCspMbnUzoVQhNYPu8E6bl/S9Vs4="
+        "AAECAwQFBgcICQoL7QDIFoZ2P6lWoEsVFVFYzVxi"
+        + "la6Rec5+C0q8x+kwTCkNOsIhCxFuhfqZ3P+GuOYD"
+        + "3iEISSGd2htF5q+9+"
+        + "fNRT29e/FhX4BBTrQBYM1bCHi7IszRfzMi"
+        + "cW3YBReqSin7q/pel0sdX87KKBi4CM9x9Owi"
+        + "SzQZtm2BVQQ6xBrKV9GxuCspMbnU"
+        + "zoVQhNYPu8E6bl/S9Vs4="
     private static let vectorKey = Data(base64Encoded: "3ODfqVpzY+MOyn+i0oOMPg==")!
 
     override func tearDown() {

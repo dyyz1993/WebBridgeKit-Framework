@@ -54,12 +54,12 @@ final class StructuredLoggerSanitizationTests: XCTestCase {
     }
 
     func testSanitize_api_keyKey_masksValue() {
-        let longValue = "sk-1234567890abcdef"
+        let longValue = "example-key-1234567890"
         logger.debug("test", context: ["api_key": longValue])
 
         let entry = logger.query().last
         let sanitized = entry?.context?["api_key"]
-        XCTAssertEqual(sanitized, "sk-1****cdef")
+        XCTAssertEqual(sanitized, "exam****7890")
     }
 
     func testSanitize_secretKey_masksValue() {

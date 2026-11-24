@@ -35,8 +35,8 @@ final class HTMLAppOfflineStaleFallbackTests: XCTestCase {
     }
 
     private var root: URL!
-    private let origin = URL(string: "https://vot.example.invalid:8443")!
-    private let appID = "app.vot.example.invalid"
+    private let origin = URL(string: "https://fixture.example.invalid:8443")!
+    private let appID = "app.fixture.example.invalid"
     private let signingKey = Curve25519.Signing.PrivateKey()
     private let keyID = "gw-test-key"
 
@@ -433,7 +433,7 @@ final class HTMLAppOfflineStaleFallbackTests: XCTestCase {
 
     func testFallbackIdentityUsesSignedParentOriginAuthority() async throws {
         let fixture = try await installVOTPackage()
-        let movedOrigin = "https://vot2.example.invalid:8443"
+        let movedOrigin = "https://moved-fixture.example.invalid:8443"
         let updated = try makeSignedParent(
             version: "0.4.10.5",
             digest: String(repeating: "b", count: 64),
@@ -444,7 +444,7 @@ final class HTMLAppOfflineStaleFallbackTests: XCTestCase {
         let resourceIdentity = locator.logicalDocumentURL(
             for: fixture.versionDirectory.appendingPathComponent("manifest.json"),
             parent: updated,
-            launchPage: URL(string: "https://vot2.example.invalid:8443/drel.html"),
+            launchPage: URL(string: "https://moved-fixture.example.invalid:8443/drel.html"),
             offlineFallback: true,
             signatureVerifier: gatewayVerifier()
         )

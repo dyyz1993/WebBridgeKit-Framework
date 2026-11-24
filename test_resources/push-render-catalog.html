@@ -75,7 +75,7 @@
   <div class="expect"><b>预期：</b>详情页显示由 App 生成的二维码图案，用另一台手机扫码应读出 <code>webbridgekit://login/example</code>。</div>
 </div>
 
-<div class="card" data-payload='{"title":"图片预览","body":"远程图片加载测试","contentType":"image","image":"https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/images/photo1.jpg"}'>
+<div class="card" data-payload='{"title":"图片预览","body":"远程图片加载测试","contentType":"image","image":"https://fixture.example.invalid/test_resources/images/photo1.jpg"}'>
   <div class="row"><h3>图片（正常）<small>HTTPS 远程图加载</small></h3><button>发送</button></div>
   <div class="expect"><b>预期：</b>详情页内嵌显示这张照片（风光图）。</div>
 </div>
@@ -132,7 +132,7 @@
   <div class="expect"><b>预期：</b>主屏 App 图标右上角出现数字 3（清除通知或进 App 后消除）。</div>
 </div>
 
-<div class="card" data-payload='{"title":"自定义图标","body":"详情应显示自定义图标","icon":"https://ae8fcb.legacy-infra.example.invalid:8443/test_resources/images/logo.png"}'>
+<div class="card" data-payload='{"title":"自定义图标","body":"详情应显示自定义图标","icon":"https://fixture.example.invalid/test_resources/images/logo.png"}'>
   <div class="row"><h3>自定义图标 icon<small>远程图标 URL</small></h3><button>发送</button></div>
   <div class="expect"><b>预期：</b>详情页消息头像位置显示该 logo 图（横幅附件渲染依赖 NSE 富处理，暂以详情页为准）。</div>
 </div>
@@ -153,7 +153,7 @@
   <div class="expect"><b>预期：</b>点击横幅后 <code>CLIPBOARD-8f2k</code> 自动进入剪贴板（去任意输入框粘贴验证），详情页有复制按钮。</div>
 </div>
 
-<div class="card" data-payload='{"title":"链接跳转","body":"详情/点击应打开链接","url":"https://demo.xbrowser.dev/"}'>
+<div class="card" data-payload='{"title":"链接跳转","body":"详情/点击应打开链接","url":"https://fixture.example.invalid/"}'>
   <div class="row"><h3>链接跳转<small>url 字段</small></h3><button>发送</button></div>
   <div class="expect"><b>预期：</b>详情页显示可点击链接，点击（或点横幅）打开 Demo Chat 页面。</div>
 </div>

@@ -56,7 +56,7 @@ GATEWAY_PRIVATE_KEY=<上一步输出>
 ```bash
 SOURCE="/path/to/pichat/dist"                       # 你的构建产物目录
 PUBLIC_ROOT="https://pi-chat.example.com:8443/drel" # 产物将部署到的公网根地址
-APP_ID="com.legacy-infra.pichat"                         # ≤64 字符，仅 A-Za-z0-9._-
+APP_ID="com.example.pichat"                         # ≤64 字符，仅 A-Za-z0-9._-
 VERSION="1"
 ```
 
@@ -132,7 +132,7 @@ curl -X POST "https://<网关域名>/api/v1/html-apps" \
   -H "Content-Type: application/json" \
   -d '{
     "schemaVersion": "1",
-    "appId": "com.legacy-infra.pichat",
+    "appId": "com.example.pichat",
     "name": "Pi Chat",
     "startURL": "https://pi-chat.example.com:8443/",
     "allowedOrigins": ["https://pi-chat.example.com:8443"],

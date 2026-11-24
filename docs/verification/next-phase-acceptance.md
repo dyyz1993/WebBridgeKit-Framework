@@ -62,7 +62,7 @@ The deterministic fixture and installer/model tests prove the signed parent mani
 
 ### Closeout update (2026-08-24)
 
-The product gap above is now closed in source: App Center prepares a strong-offline-eligible package on first open and reports pending/update/installed version plus package size in the existing app-detail sheet. `HTMLAppOfflinePackageInstallerTests` passed 9/9 and the deterministic package verifier passed 4/4. The retired `https://cloak.xbrowser.dev:5801` test target was aligned to the configured legacy-infra official gateway; its public contract passed 5/5 and the validate-before-activate simulator journey passed 1/1.
+The product gap above is now closed in source: App Center prepares a strong-offline-eligible package on first open and reports pending/update/installed version plus package size in the existing app-detail sheet. `HTMLAppOfflinePackageInstallerTests` passed 9/9 and the deterministic package verifier passed 4/4. The retired test target was aligned to the configured official gateway; its public contract passed 5/5 and the validate-before-activate simulator journey passed 1/1.
 
 ## Manual Real-Device Gate
 
@@ -72,4 +72,4 @@ The product gap above is now closed in source: App Center prepares a strong-offl
 - Verify tap routing, background delivery and lock-screen behavior.
 - Verify notification Settings handoff on a physical iPhone.
 
-Public legacy-infra and gateway checks prove route/process/fixture reachability only; they do not satisfy these manual rows.
+Public backend and gateway checks prove route/process/fixture reachability only; they do not satisfy these manual rows.

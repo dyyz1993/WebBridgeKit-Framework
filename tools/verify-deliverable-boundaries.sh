@@ -26,16 +26,65 @@ echo ""
 echo "=== Framework Deliverable Boundary Verification ==="
 echo ""
 
-CREDENTIAL_MATCHES=$(rg -n -i \
-    --glob '*.swift' \
-    --glob '*.plist' \
-    --glob '*.json' \
-    'test_key|-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----|BarkChannel\([^)]*key:[[:space:]]*"[^"]+"|barkDeviceKey:[[:space:]]*"[^"]+"|((api|webhook)[_-]?(key|secret)|apns[_-]?(token|key)|device[_-]?token|private[_-]?key)[[:space:]]*[:=][[:space:]]*"[^"[:space:]][^"]*"' \
-    AppTemplate/Sources 2>/dev/null || true)
+CREDENTIAL_MATCHES=$(git ls-files -z | python3 -c '
+import collections
+import math
+import os
+import re
+import sys
+
+private_key_pattern = re.compile(r"-----BEGIN[[:space:]]+([A-Z ]+ )?PRIVATE KEY[[:space:]]*-----", re.IGNORECASE)
+prefix_parts = (
+    ("gh", "p_"),
+    ("gh", "o_"),
+    ("s", "k-"),
+    ("AK", "IA"),
+    ("xox", "b-"),
+    ("xox", "a-"),
+    ("xox", "p-"),
+    ("xox", "r-"),
+    ("xox", "s-"),
+)
+token_prefixes = tuple(left + right for left, right in prefix_parts)
+credential_pattern = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:"
+    + "|".join(re.escape(prefix) for prefix in token_prefixes)
+    + r")",
+    re.IGNORECASE,
+)
+long_token_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{39,}")
+
+def entropy(value):
+    if not value:
+        return 0.0
+    counts = collections.Counter(value)
+    return sum((count / len(value)) * math.log2(len(value) / count) for count in counts.values())
+
+for filename in sys.stdin.buffer.read().split(b"\0"):
+    if not filename:
+        continue
+    path = os.fsdecode(filename)
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        continue
+    text = data.decode("utf-8", errors="ignore")
+    for match in credential_pattern.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        print(f"{path}:{line}: credential pattern")
+
+    if b"\0" in data:
+        continue
+    for match in long_token_pattern.finditer(text):
+        candidate = match.group(0)
+        if entropy(candidate) >= 4.8 and "abcdefghijklmnopqrstuvwxyz" not in candidate:
+            line = text.count("\n", 0, match.start()) + 1
+            print(f"{path}:{line}: high-entropy token")
+' 2>/dev/null || true)
 if [ -z "$CREDENTIAL_MATCHES" ]; then
-    pass "AppTemplate contains no literal credentials or private keys"
+    pass "Repository contains no literal credentials, private keys, or high-entropy tokens"
 else
-    fail "AppTemplate contains no literal credentials or private keys" "$CREDENTIAL_MATCHES"
+    fail "Repository contains no literal credentials, private keys, or high-entropy tokens" "$CREDENTIAL_MATCHES"
 fi
 
 if awk '

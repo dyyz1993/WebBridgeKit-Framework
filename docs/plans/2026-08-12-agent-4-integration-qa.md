@@ -121,7 +121,7 @@ bash scripts/services.sh verify
 (cd Server && swift test)
 bash tools/verify-message-types-v1.sh
 bash tools/verify-approval-v1.sh
-WBK_GATEWAY_URL=https://cloak.xbrowser.dev:5801 bash tools/verify-open-gateway.sh
+WBK_GATEWAY_URL=https://gateway.example.invalid bash tools/verify-open-gateway.sh
 bash tools/verify-strong-offline-package.sh
 bash tools/run-cache-regression.sh
 bash tools/run-jsbridge-regression.sh
@@ -158,9 +158,9 @@ bash scripts/scan-crash-logs.sh --json
 运行：
 
 ```bash
-bash tools/verify-legacy-infra-backend.sh
-bash tools/verify-legacy-infra-supervision.sh
-bash tools/verify-legacy-infra-fixtures.sh
+bash tools/verify-public-backend.sh
+bash tools/verify-deployment-supervision.sh
+bash tools/verify-public-fixtures.sh
 ```
 
 这些只能证明路由、进程托管和公共 fixture 可达。不得据此声称真实 APNs、锁屏通知或后台行为通过。

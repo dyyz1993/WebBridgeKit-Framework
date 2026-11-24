@@ -21,7 +21,7 @@
 - Task 1 complete locally: Release archive, HTML exclusion, and DEBUG-only binary scan all passed.
 - Task 2 complete locally: the developer home remains a Release feature. Simulator coverage passes for the address/copy state, the first-push/API/documentation entry points, and all seven canonical push examples.
 - Task 4 product implementation complete locally: opening a strong-offline-eligible HTML app now verifies and atomically prepares the package before launch; App Center shows pending/update/installed version and actual disk size. `HTMLAppOfflinePackageInstallerTests` passed 9/9, `verify-strong-offline-package.sh` passed 4/4, `run-cache-regression.sh` passed 5/5 (including CacheTests 557/557), and the final Release Gate passed 9/9.
-- Task 4 public integration complete: the timed-out `cloak.xbrowser.dev:5801` target was a retired gateway still present in automation, not the configured official service. Verification now targets `https://wbk.legacy-infra.example.invalid:8443`: `verify-open-gateway.sh` passed 5/5 and the simulator's validate-before-activate journey passed 1/1. HTTPS, signature, and offline-package checks remain unchanged.
+- Task 4 public integration complete: the timed-out retired gateway target was removed from automation, leaving the configured official service. Verification now targets `https://gateway.example.invalid`: `verify-open-gateway.sh` passed 5/5 and the simulator's validate-before-activate journey passed 1/1. HTTPS, signature, and offline-package checks remain unchanged.
 - Remaining release blockers are device- or store-bound: production signing/TestFlight APNs acceptance, legal/support URLs and App Store Connect privacy/metadata, plus final store media.
 
 ### Task 1: Restore Release compilation and make the gate regression-proof
@@ -136,7 +136,7 @@ git commit -m "test(onboarding): lock developer push-home contract"
 **Files:**
 - Modify: `docs/verification/module-availability-verification.md`
 - Modify if evidence exposes a defect: only the owning `SuperApp/`, `NotificationServiceExtension/`, or `Server/` file
-- Verify: `tools/verify-legacy-infra-backend.sh`, `tools/verify-real-device-push-readiness.sh`, `SuperAppUITests/RealDevicePushSmokeTests.swift`
+- Verify: `tools/verify-public-backend.sh`, `tools/verify-real-device-push-readiness.sh`, `SuperAppUITests/RealDevicePushSmokeTests.swift`
 
 **Step 1: Produce a production-signed TestFlight candidate.**
 
@@ -147,7 +147,7 @@ In Xcode/App Store Connect, use the paid team and Push-enabled App ID for `com.w
 Run:
 
 ```bash
-bash tools/verify-legacy-infra-backend.sh
+bash tools/verify-public-backend.sh
 DEVICE_ID=<paired-iphone-id> bash tools/verify-real-device-push-readiness.sh
 ```
 

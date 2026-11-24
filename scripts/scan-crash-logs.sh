@@ -6,6 +6,7 @@ set -euo pipefail
 
 JSON_MODE=false
 FIX_MODE=false
+REMOTE_SERVER="${WBK_CRASH_LOG_ENDPOINT:-}"
 for arg in "$@"; do
   case "$arg" in
     --json) JSON_MODE=true ;;
@@ -20,10 +21,14 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 BUNDLE_ID="com.webbridgekit.superapp"
-REMOTE_SERVER="${WBK_SERVER_URL:-https://wbk.legacy-infra.example.invalid:8443}"
 CRASHES=()
 WARNINGS=()
 SCAN_COUNT=0
+
+if [[ -z "$REMOTE_SERVER" ]]; then
+  echo "ERROR: WBK_CRASH_LOG_ENDPOINT is required (for example, https://gateway.example.invalid)" >&2
+  exit 1
+fi
 
 # ============================================================
 # Function Definitions (must be before calls)

@@ -19,7 +19,7 @@ final class DrelOfflineDiagnosticsTests: XCTestCase {
 
     func testStoresOnlyWhitelistedDiagnosticsFields() throws {
         let attempt = diagnostics.beginAttempt(
-            appID: "app.vot.example.invalid",
+            appID: "app.fixture.example.invalid",
             packageVersion: "0.4.10.3",
             manifestDigestPrefix: String(repeating: "a", count: 64),
             source: "notification"
@@ -43,7 +43,7 @@ final class DrelOfflineDiagnosticsTests: XCTestCase {
         XCTAssertFalse(report.contains("secret"))
         XCTAssertFalse(report.contains("value"))
         XCTAssertFalse(report.contains("private"))
-        XCTAssertTrue(report.contains("app.vot.example.invalid"))
+        XCTAssertTrue(report.contains("app.fixture.example.invalid"))
         XCTAssertTrue(report.contains("controlled"))
 
         let stored = try XCTUnwrap(diagnostics.attempt(id: attempt.id))
@@ -55,7 +55,7 @@ final class DrelOfflineDiagnosticsTests: XCTestCase {
     func testRawUnknownErrorDomainIsControlledAndCodeIsNumeric() throws {
         struct SensitiveError: Error {}
         let attempt = diagnostics.beginAttempt(
-            appID: "app.vot.legacy-infra.example.invalid",
+            appID: "app.fixture.example.invalid",
             packageVersion: nil,
             manifestDigestPrefix: "not-a-digest",
             source: "unexpected"
@@ -77,7 +77,7 @@ final class DrelOfflineDiagnosticsTests: XCTestCase {
     func testKeepsOnlyLatestTwentyAttempts() {
         for index in 0..<25 {
             let attempt = diagnostics.beginAttempt(
-                appID: "app.vot.example.invalid",
+                appID: "app.fixture.example.invalid",
                 packageVersion: String(index),
                 manifestDigestPrefix: nil,
                 source: "catalog"
