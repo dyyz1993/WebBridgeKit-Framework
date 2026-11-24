@@ -5,7 +5,7 @@
 
 set -e
 
-PROJECT_ROOT="/Users/developer/Project/temporary/WebBridgeKit"
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "🧪 WebBridgeKit Manifest Cache E2E Test"

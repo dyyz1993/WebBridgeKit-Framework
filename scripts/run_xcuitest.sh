@@ -10,13 +10,15 @@ echo "XCUITest 自动化测试执行"
 echo "=========================================="
 echo ""
 
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 # 检查工作目录
-if [ ! -d "/Users/developer/Project/temporary/WebBridgeKit" ]; then
+if [ ! -d "$PROJECT_ROOT" ]; then
     echo "❌ 错误: 项目目录不存在"
     exit 1
 fi
 
-cd /Users/developer/Project/temporary/WebBridgeKit
+cd "$PROJECT_ROOT"
 
 # 1. 检查模拟器
 echo "📱 检查iOS模拟器..."

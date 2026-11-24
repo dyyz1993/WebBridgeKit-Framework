@@ -15,9 +15,11 @@ print("")
 // 检查文件是否存在
 let fileManager = FileManager.default
 
+let projectRoot = FileManager.default.currentDirectoryPath
+
 let filesToCheck = [
-    "/Users/developer/Project/temporary/WebBridgeKit/DemoApp/Sources/Views/Cells/URLGridCell.swift",
-    "/Users/developer/Project/temporary/WebBridgeKit/DemoApp/Sources/Controllers/MainViewController.swift"
+    "\(projectRoot)/DemoApp/Sources/Views/Cells/URLGridCell.swift",
+    "\(projectRoot)/DemoApp/Sources/Controllers/MainViewController.swift"
 ]
 
 for file in filesToCheck {

@@ -28,7 +28,7 @@ async function globalSetup(config: FullConfig) {
   const { spawn } = await import('child_process');
 
   const serverProcess = spawn('python3', ['scripts/test_server.py'], {
-    cwd: '/Users/developer/Project/temporary/WebBridgeKit',
+    cwd: process.cwd(),
     stdio: 'pipe',
   });
 

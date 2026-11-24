@@ -22,6 +22,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { readdirSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 
 const execAsync = promisify(exec);
 
@@ -29,12 +31,12 @@ const execAsync = promisify(exec);
 const TEST_SERVER_URL = 'http://localhost:8080';
 const TEST_PAGE_PATH = '/manifest_test.html';  // 服务器已配置为从 test_resources 目录服务
 const MANIFEST_PATH = '/manifest.json';
-const SIMULATOR_ID = '21045190-6163-49E0-82AD-9E4CFD5E3C55';
+const SIMULATOR_ID = process.env.WBK_E2E_SIMULATOR_ID ?? '21045190-6163-49E0-82AD-9E4CFD5E3C55';
 const APP_BUNDLE_ID = 'com.webbridgekit.demo';
 
 // 查找 DemoApp.app 的实际路径
 function findAppPath(): string {
-  const derivedDataBase = '/Users/developer/Library/Developer/Xcode/DerivedData';
+  const derivedDataBase = join(homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
   const dirs = readdirSync(derivedDataBase);
 
   for (const dir of dirs) {
