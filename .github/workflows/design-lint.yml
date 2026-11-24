@@ -17,6 +17,7 @@ permissions:
 jobs:
   design-lint:
     name: Design System Lint
+    if: github.repository == 'dyyz1993/WebBridgeKit-Framework'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     steps:

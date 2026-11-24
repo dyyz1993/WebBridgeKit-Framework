@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   smoke:
+    if: github.repository == 'dyyz1993/WebBridgeKit-Framework'
     runs-on: [self-hosted, nas]
     timeout-minutes: 10
     steps:
