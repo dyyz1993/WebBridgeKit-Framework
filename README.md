@@ -45,9 +45,15 @@ bash tools/design-lint.sh --ci
 bash tools/ci-lint.sh
 ```
 
-### 方式 B：供上层应用工程（`Drel`）通过 CocoaPods 联调接入
+### 方式 B：CocoaPods 接入（无需克隆本仓库）
 
-在上层应用的 `Podfile` 中通过本地路径或 Git 版本引入：
+在你的应用工程 `Podfile` 中按 tag 引入，CocoaPods 会自动拉取源码：
+
+```ruby
+pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.0'
+```
+
+与上层应用 `Drel` 协同开发、需要同时修改 SDK 时，改用本地路径：
 
 ```ruby
 pod 'WebBridgeKit', :path => ENV.fetch('WBK_FRAMEWORK_PATH', '../WebBridgeKit-Framework')
@@ -55,9 +61,21 @@ pod 'WebBridgeKit', :path => ENV.fetch('WBK_FRAMEWORK_PATH', '../WebBridgeKit-Fr
 
 ### 方式 C：Swift Package Manager 接入
 
-本工程根目录提供 `Package.swift`，暴露 `WebBridgeKit` 与 `WBKMessage` 两个 Library Product。
+本工程根目录提供 `Package.swift`，暴露 `WebBridgeKit` 与 `WBKMessage` 两个 Library Product。最低支持 iOS 15 / Swift 5.9。
+
+**Xcode 图形界面**：File → Add Package Dependencies… → 搜索框输入 `https://github.com/dyyz1993/WebBridgeKit-Framework.git` → Dependency Rule 选「Up to Next Major Version」并填 `1.4.0` → Add Package → 勾选 `WebBridgeKit`。
+
+**或在 `Package.swift` 中声明**：
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/dyyz1993/WebBridgeKit-Framework.git", from: "1.4.0")
+]
+```
+
+然后在 target 的 `dependencies` 中加入 `.product(name: "WebBridgeKit", package: "WebBridgeKit-Framework")`。
 
 ## 4. 开发规范与跨层协作指南
 
-完整的开发规范、代码质量门禁以及《应用层遇到底层框架问题的标准排查与处理 SOP》请查阅：
-- `docs/DEVELOPMENT_AND_COLLABORATION_GUIDE.md`
+- 本仓库的开发规范与代码质量门禁：`CONTRIBUTING.md`、`AGENTS.md`
+- 《应用层遇到底层框架问题的标准排查与处理 SOP》：见上层应用仓库 [Drel 的协作指南](https://github.com/dyyz1993/Drel/blob/main/docs/DEVELOPMENT_AND_COLLABORATION_GUIDE.md)
