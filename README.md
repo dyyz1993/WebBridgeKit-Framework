@@ -1,5 +1,7 @@
 # WebBridgeKit Framework (`WebBridgeKit-Framework`)
 
+中文 | [English](README.en.md)
+
 iOS 原生增强 PWA 运行时底层框架 SDK（`WebBridgeKit`）与最小宿主接入模板（`AppTemplate`）。
 
 ## 1. 仓库定位与边界
@@ -9,9 +11,9 @@ iOS 原生增强 PWA 运行时底层框架 SDK（`WebBridgeKit`）与最小宿�
 - **`Sources/`（WebBridgeKit SDK 核心）**：包含 6 大核心引擎（`Bridge`、`Cache`、`Message`、`AI`、`Theme`、`Skills`）、2 大基础设施（`WebSocket`、`CommandParser`）、41 个原生能力 Handler、通用 HTML App 运行时（`Runtime/`）及服务定位层（`Services/`）。
 - **`Resources/`**：内置 `WebBridge.js` 桥接脚本、调试辅助脚本及 `PrivacyInfo.xcprivacy` 隐私清单。
 - **`AppTemplate/`（最小宿主起点）**：演示如何安全初始化并接入 `WebBridgeKit` SDK 的最小宿主工程，不包含任何测试硬编码凭据、不默认自启后台调试服务，亦不耦合上层业务 UI。
-- **`Tests/`（单元测试矩阵）**：包含 19 个单元测试 Target（`BridgeTests`、`CacheTests`、`MessageTests`、`HandlerTests`、`CoreTests`、`ModelsTests` 等共 168 个测试文件）。
+- **`Tests/`（单元测试矩阵）**：每个引擎一个单元测试 Target（`BridgeTests`、`CacheTests`、`MessageTests`、`HandlerTests`、`CoreTests`、`ModelsTests` 等）。
 
-> 上层完整产品应用（Target 为 `Drel`，源码目录为 `SuperApp/`）、通知服务扩展（`NotificationServiceExtension`）、UI 自动化测试（`DrelUITests`）及后端服务（`Server/`）已独立拆分至同级 [Drel 仓库](https://github.com/dyyz1993/Drel)。两个开发仓库目前均为私有仓库，需要相应 GitHub 访问权限；旧公开 `WebBridgeKit` 仓库仅保留历史代码和公开技能分发。
+> 上层完整产品应用（Target 为 `Drel`，源码目录为 `SuperApp/`）、通知服务扩展（`NotificationServiceExtension`）、UI 自动化测试（`DrelUITests`）及后端服务（`Server/`）已独立拆分至同级 [Drel 仓库](https://github.com/dyyz1993/Drel)。旧 `WebBridgeKit` 仓库仅保留历史代码和公开技能分发。
 
 ## 2. 宿主注入与解耦契约（Phase 1 解耦落地）
 
