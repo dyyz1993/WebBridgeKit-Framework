@@ -77,6 +77,18 @@ dependencies: [
 
 然后在 target 的 `dependencies` 中加入 `.product(name: "WebBridgeKit", package: "WebBridgeKit-Framework")`。
 
+### 方式 D：预编译 xcframework（可选）
+
+`WebBridgeKit` 是**动态** framework，其公开接口（`.swiftinterface`）直接 `import` 了 podspec 中的第三方模块（`RxSwift`、`RealmSwift`、`SnapKit` 等）。因此二进制分发**不会**把这些依赖打包进去：使用方必须自行链接相同版本的模块，否则同时使用这些库的宿主 App 会出现重复符号。
+
+```bash
+bash tools/build-xcframework.sh            # 输出到 build/xcframework
+```
+
+脚本会归档 device 与 simulator 两个切片、合成 `WebBridgeKit.xcframework`，并生成 `MANIFEST.json`（记录版本、构建所用 Xcode、以及使用方必须链接的模块清单）。`.swiftinterface` 与编译它的 Xcode 版本相关，升级 Xcode 后需要重新生成。
+
+对绝大多数使用者，**方式 B 或 C（源码依赖）更简单**：没有版本绑定，也不需要手动对齐依赖。只有在“不希望使用方编译 SDK 源码”的场景下才需要方式 D。
+
 ## 4. 开发规范与跨层协作指南
 
 - 本仓库的开发规范与代码质量门禁：`CONTRIBUTING.md`、`AGENTS.md`

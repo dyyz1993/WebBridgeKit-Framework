@@ -95,6 +95,28 @@ dependencies: [
 Then add `.product(name: "WebBridgeKit", package: "WebBridgeKit-Framework")` to
 your target's `dependencies`.
 
+### Option D: prebuilt xcframework (optional)
+
+`WebBridgeKit` is a **dynamic** framework whose public interface
+(`.swiftinterface`) directly `import`s the third-party modules from the
+podspec (`RxSwift`, `RealmSwift`, `SnapKit`, ...). A binary build therefore does
+**not** bundle those dependencies: the consumer has to link the same modules at
+the same versions, or a host app that also uses them gets duplicate symbols.
+
+```bash
+bash tools/build-xcframework.sh            # writes to build/xcframework
+```
+
+The script archives a device and a simulator slice, assembles
+`WebBridgeKit.xcframework` and writes a `MANIFEST.json` recording the version,
+the Xcode it was built with and the modules the consumer must link. The
+`.swiftinterface` is tied to that Xcode version, so rebuild after upgrading
+Xcode.
+
+For most users **option B or C (source dependency) is simpler**: nothing is tied
+to a compiler version and no dependencies have to be aligned by hand. Choose
+option D only when consumers must not compile the SDK sources.
+
 ## 4. Development and collaboration
 
 - Development rules and quality gates for this repository: `CONTRIBUTING.md`, `AGENTS.md` (Chinese)
