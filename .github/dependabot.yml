@@ -4,3 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Major action releases (for example actions/checkout v4 -> v5) change the
+    # Node runtime they require, which the self-hosted runners must support
+    # first. Propose minor and patch updates only; majors are scheduled by hand.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
