@@ -256,6 +256,7 @@ docs: update integration guide
    a pull request from a fork are skipped, even after a maintainer approves the
    run, so run the checks locally and paste the results into the pull request;
    a maintainer will run them from a branch inside this repository.
+   The hosted `Docs` workflow checks Markdown links for every pull request.
 6. At least one maintainer review before merge.
 
 ## Architecture Overview
