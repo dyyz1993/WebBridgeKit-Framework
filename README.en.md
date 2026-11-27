@@ -66,7 +66,7 @@ bash tools/ci-lint.sh
 Reference a tag in your app's `Podfile` and CocoaPods fetches the sources:
 
 ```ruby
-pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.0'
+pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.1'
 ```
 
 When you develop the SDK together with the `Drel` app, use a local path instead:
@@ -82,20 +82,29 @@ The `Package.swift` at the repository root exposes two library products,
 
 **In Xcode**: File → Add Package Dependencies… → enter
 `https://github.com/dyyz1993/WebBridgeKit-Framework.git` → choose
-"Up to Next Major Version" and enter `1.4.0` → Add Package → tick `WebBridgeKit`.
+"Up to Next Major Version" and enter `1.4.1` → Add Package → tick `WebBridgeKit`.
 
 **Or declare it in your `Package.swift`**:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/dyyz1993/WebBridgeKit-Framework.git", from: "1.4.0")
+    .package(url: "https://github.com/dyyz1993/WebBridgeKit-Framework.git", from: "1.4.1")
 ]
 ```
 
 Then add `.product(name: "WebBridgeKit", package: "WebBridgeKit-Framework")` to
 your target's `dependencies`.
 
-### Option D: prebuilt xcframework (optional)
+### Option D: Binary (xcframework)
+
+Download `WebBridgeKit.xcframework.zip`, `MANIFEST.json`, and `SHA256SUMS` from the
+[GitHub Release 1.4.1](https://github.com/dyyz1993/WebBridgeKit-Framework/releases/tag/1.4.1),
+verify the files, then extract the archive and drag `WebBridgeKit.xcframework` into the
+Xcode project:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
 
 `WebBridgeKit` is a **dynamic** framework whose public interface
 (`.swiftinterface`) directly `import`s the third-party modules from the

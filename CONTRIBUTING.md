@@ -252,11 +252,10 @@ docs: update integration guide
    `feat(scope): description`.
 5. CI must pass: SwiftLint, Build (WebBridgeKit + AppTemplate + boundary
    check), the unit-test matrix, and the architecture/design lint workflows.
-   Continuous integration runs on the maintainers' own machines. The jobs for
-   a pull request from a fork are skipped, even after a maintainer approves the
-   run, so run the checks locally and paste the results into the pull request;
-   a maintainer will run them from a branch inside this repository.
-   The hosted `Docs` workflow checks Markdown links for every pull request.
+   For forks, hosted `CI (fork pull requests)` runs the Linux repository gates
+   and macOS lint/build. The hosted `Docs` workflow checks Markdown links for
+   every pull request. If a hosted job cannot run, run the relevant checks
+   locally and paste the results into the pull request.
 6. At least one maintainer review before merge.
 
 ## Architecture Overview
@@ -319,13 +318,15 @@ pod 'WebBridgeKit', :path => ENV.fetch('WBK_FRAMEWORK_PATH', '../WebBridgeKit-Fr
 CocoaPods (a tagged release):
 
 ```ruby
-pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.0'
+pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.1'
 ```
 
 Swift Package Manager: this repo's `Package.swift` exposes the `WebBridgeKit`
 and `WBKMessage` library products.
 
-`1.4.0` is published and resolves anonymously. Drel does not depend on the tag:
+The GitHub Release for `1.4.1` also attaches a prebuilt `WebBridgeKit.xcframework`.
+
+`1.4.1` is published and resolves anonymously. Drel does not depend on the tag:
 its `framework-revision.txt` pins a commit of this repository's `main` branch
 and its build checks that commit out, so moving `main` does not break Drel
 until that pin is moved on purpose.

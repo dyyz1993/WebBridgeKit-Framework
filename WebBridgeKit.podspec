@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'WebBridgeKit'
-  s.version          = '1.4.0'
+  s.version          = '1.4.1'
   s.summary          = 'Reusable iOS Native-Enhanced PWA Runtime SDK (Bridge, Cache, Message, AI, Theme, Skills).'
   s.description      = <<-DESC
     WebBridgeKit provides a unified JS-to-Native Bridge (41 handlers), 3-tier offline/manifest cache engine,

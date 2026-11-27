@@ -1,0 +1,61 @@
+name: CI (fork pull requests)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-fork-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
+    name: Hosted Linux checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Run portable repository gates
+        run: |
+          python3 tools/verify-docs-links.py
+          bash tools/verify-deliverable-boundaries.sh
+
+  macos:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
+    name: Hosted macOS lint and build
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install build tooling
+        run: brew install xcodegen cocoapods swiftlint xcpretty
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Install CocoaPods dependencies
+        run: pod install
+
+      - name: Lint Swift sources
+        run: swiftlint lint --config .swiftlint.yml Sources/ AppTemplate/Sources/
+
+      - name: Build WebBridgeKit for iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace WebBridgeKit.xcworkspace \
+            -scheme WebBridgeKit \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO

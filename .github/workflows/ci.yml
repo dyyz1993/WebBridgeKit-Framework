@@ -25,15 +25,15 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
 
       - name: Cache Homebrew
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/Library/Caches/Homebrew
           key: brew-${{ runner.os }}-swiftlint
@@ -49,9 +49,8 @@ jobs:
     if: github.repository == 'dyyz1993/WebBridgeKit-Framework' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
-    needs: []
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The shell verification gates (deliverable boundaries, template gate,
       # design lint) rely on ripgrep, which is not preinstalled on the
@@ -60,7 +59,7 @@ jobs:
         run: brew install ripgrep
 
       - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
 
@@ -103,7 +102,7 @@ jobs:
       - name: Upload Build Artifacts
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-results
           path: |
@@ -150,10 +149,10 @@ jobs:
               ViewModelTests
               WebBridgeKitTests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
 
@@ -214,7 +213,7 @@ jobs:
 
           if [ -z "$RUNTIME" ]; then
             echo "::warning::No iOS runtime found"
-            echo "use_simulator=false" >> $GITHUB_OUTPUT
+            echo "use_simulator=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -223,14 +222,14 @@ jobs:
           DEVICE_ID=$(xcrun simctl create "CI-Unit-${{ matrix.group.name }}" "iPhone 16 Pro" "$RUNTIME" || echo "")
           if [ -z "$DEVICE_ID" ]; then
             echo "::warning::Failed to create simulator"
-            echo "use_simulator=false" >> $GITHUB_OUTPUT
+            echo "use_simulator=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE_ID" -b 2>/dev/null || true
-          echo "device_id=$DEVICE_ID" >> $GITHUB_OUTPUT
-          echo "use_simulator=true" >> $GITHUB_OUTPUT
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+          echo "use_simulator=true" >> "$GITHUB_OUTPUT"
           echo "Simulator ready: $DEVICE_ID (runtime: $RUNTIME)"
 
       - name: Run All Schemes in Group
@@ -245,6 +244,7 @@ jobs:
           PASSED=""
           FAILED=""
 
+          # shellcheck disable=SC2086
           for SCHEME in $SCHEMES; do
             echo ""
             echo "========================================="
@@ -255,7 +255,7 @@ jobs:
             MAX_ATTEMPTS=2
             SCHEME_OK=false
 
-            while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
               echo "  Attempt $ATTEMPT/$MAX_ATTEMPTS for $SCHEME"
 
               set +e
@@ -334,7 +334,7 @@ jobs:
       - name: Upload Test Results
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-results-${{ matrix.group.name }}
           path: |
@@ -345,7 +345,7 @@ jobs:
       - name: Upload Coverage
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-${{ matrix.group.name }}
           path: build/coverage-*.txt
@@ -353,7 +353,7 @@ jobs:
 
       - name: Publish Test Report
         if: always()
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # v4.3.1
         with:
           report_paths: build/test-results.xml
           check_name: "Unit Tests (${{ matrix.group.name }})"
@@ -372,7 +372,7 @@ jobs:
       - name: Upload Diagnostics
         if: always() && failure()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: diagnostics-${{ matrix.group.name }}
           path: diagnostics/

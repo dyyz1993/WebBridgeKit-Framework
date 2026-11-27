@@ -52,7 +52,7 @@ bash tools/ci-lint.sh
 在你的应用工程 `Podfile` 中按 tag 引入，CocoaPods 会自动拉取源码：
 
 ```ruby
-pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.0'
+pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.1'
 ```
 
 与上层应用 `Drel` 协同开发、需要同时修改 SDK 时，改用本地路径：
@@ -65,19 +65,27 @@ pod 'WebBridgeKit', :path => ENV.fetch('WBK_FRAMEWORK_PATH', '../WebBridgeKit-Fr
 
 本工程根目录提供 `Package.swift`，暴露 `WebBridgeKit` 与 `WBKMessage` 两个 Library Product。最低支持 iOS 15 / Swift 5.9。
 
-**Xcode 图形界面**：File → Add Package Dependencies… → 搜索框输入 `https://github.com/dyyz1993/WebBridgeKit-Framework.git` → Dependency Rule 选「Up to Next Major Version」并填 `1.4.0` → Add Package → 勾选 `WebBridgeKit`。
+**Xcode 图形界面**：File → Add Package Dependencies… → 搜索框输入 `https://github.com/dyyz1993/WebBridgeKit-Framework.git` → Dependency Rule 选「Up to Next Major Version」并填 `1.4.1` → Add Package → 勾选 `WebBridgeKit`。
 
 **或在 `Package.swift` 中声明**：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/dyyz1993/WebBridgeKit-Framework.git", from: "1.4.0")
+    .package(url: "https://github.com/dyyz1993/WebBridgeKit-Framework.git", from: "1.4.1")
 ]
 ```
 
 然后在 target 的 `dependencies` 中加入 `.product(name: "WebBridgeKit", package: "WebBridgeKit-Framework")`。
 
-### 方式 D：预编译 xcframework（可选）
+### 方式 D：Binary (xcframework)
+
+从 [GitHub Release 1.4.1](https://github.com/dyyz1993/WebBridgeKit-Framework/releases/tag/1.4.1) 下载
+`WebBridgeKit.xcframework.zip`、`MANIFEST.json` 与 `SHA256SUMS`，先校验下载文件，再解压并把
+`WebBridgeKit.xcframework` 拖入 Xcode 工程：
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
 
 `WebBridgeKit` 是**动态** framework，其公开接口（`.swiftinterface`）直接 `import` 了 podspec 中的第三方模块（`RxSwift`、`RealmSwift`、`SnapKit` 等）。因此二进制分发**不会**把这些依赖打包进去：使用方必须自行链接相同版本的模块，否则同时使用这些库的宿主 App 会出现重复符号。
 
