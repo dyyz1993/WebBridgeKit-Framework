@@ -74,7 +74,7 @@ VERSION="1"
 
 ### webmanifest 字段速查
 
-完整规范见 [`docs/api/drel-web-app-manifest-profile.md`](../api/drel-web-app-manifest-profile.md)。Drel 只读取下列字段：
+完整规范见 Drel 仓库的 [`docs/api/drel-web-app-manifest-profile.md`](https://github.com/dyyz1993/Drel/blob/main/docs/api/drel-web-app-manifest-profile.md)。Drel 只读取下列字段：
 
 | 字段 | 用途 | 注意 |
 | --- | --- | --- |

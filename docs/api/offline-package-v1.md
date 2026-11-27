@@ -7,7 +7,9 @@ WebKit cache are unavailable. It is an installation contract, not an approval
 or command-execution channel.
 
 For the standard PWA metadata layer (`name`, `icons`, `start_url`, `scope`,
-`display` and colors), see [Drel Web App Manifest Profile](drel-web-app-manifest-profile.md).
+`display` and colors), see the
+[Drel Web App Manifest Profile](https://github.com/dyyz1993/Drel/blob/main/docs/api/drel-web-app-manifest-profile.md)
+in the Drel repository.
 That standard `manifest.json` describes an application; this document verifies
 the exact bytes that Drel is allowed to retain offline.
 

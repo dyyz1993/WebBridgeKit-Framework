@@ -5,14 +5,14 @@ split out of the original `WebBridgeKit` monorepo per ADR-0002 / ADR-0006
 (see `docs/repository-split.md`). It contains only the reusable SDK, the minimal
 host template, and the SDK unit-test matrix.
 
-**This is a private repository.** Clone and push require SSH keys or GitHub
-access granted to `dyyz1993/WebBridgeKit-Framework`. There is no fork-based
-workflow — contributors work on branches inside this repo.
+**This repository is public and MIT licensed.** Clone it over HTTPS without any
+GitHub access, and contribute through a fork and a pull request against `main`;
+see "Pull Request Process" below.
 
 **The product app is a sibling repo, not this repo.** `Drel`
 (`github.com/dyyz1993/Drel`, checked out side-by-side with this repo) owns the
 `Drel` product target (source directory `SuperApp/`), the `Server/` backend,
-`NotificationServiceExtension`, and `DrelUITests`. Do **not** look for a
+`NotificationServiceExtension`, and `SuperAppUITests/`. Do **not** look for a
 `SuperApp` scheme here — this repo has none. Some legacy scripts still mention
 `SuperApp` (see "Known monorepo leftovers" below); the gates listed in this
 guide are the ones that work against the framework alone.
@@ -243,14 +243,19 @@ docs: update integration guide
 
 ## Pull Request Process
 
-1. Branch from `main` (e.g. `feat/bridge-xyz`) and push to `origin` — this is
-   a private repo, so there is no fork workflow.
+1. Fork the repository, branch from `main` (e.g. `feat/bridge-xyz`) and push
+   the branch to your fork. Maintainers can work on a branch in this
+   repository instead.
 2. Write/update unit tests for all SDK changes.
 3. Run `swiftlint --quiet` and the relevant verification gates locally.
 4. Open a PR against `main`. PR titles follow the commit format:
    `feat(scope): description`.
 5. CI must pass: SwiftLint, Build (WebBridgeKit + AppTemplate + boundary
    check), the unit-test matrix, and the architecture/design lint workflows.
+   Continuous integration runs on the maintainers' own machines. The jobs for
+   a pull request from a fork are skipped, even after a maintainer approves the
+   run, so run the checks locally and paste the results into the pull request;
+   a maintainer will run them from a branch inside this repository.
 6. At least one maintainer review before merge.
 
 ## Architecture Overview
@@ -310,7 +315,7 @@ CocoaPods (development, local path — see README):
 pod 'WebBridgeKit', :path => ENV.fetch('WBK_FRAMEWORK_PATH', '../WebBridgeKit-Framework')
 ```
 
-CocoaPods (a future tagged release, after publishing the matching SDK tag):
+CocoaPods (a tagged release):
 
 ```ruby
 pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.git', :tag => '1.4.0'
@@ -319,10 +324,10 @@ pod 'WebBridgeKit', :git => 'https://github.com/dyyz1993/WebBridgeKit-Framework.
 Swift Package Manager: this repo's `Package.swift` exposes the `WebBridgeKit`
 and `WBKMessage` library products.
 
-The podspec currently declares `1.4.0`, but the new repository had no remote
-release tags at the 2026-10-19 audit. Use the local-path setup above until a
-matching tag is deliberately published; changing the source URL alone does
-not make the tagged example installable. Repository access is required.
+`1.4.0` is published and resolves anonymously. Drel does not depend on the tag:
+its `framework-revision.txt` pins a commit of this repository's `main` branch
+and its build checks that commit out, so moving `main` does not break Drel
+until that pin is moved on purpose.
 
 ## Further Reading
 
