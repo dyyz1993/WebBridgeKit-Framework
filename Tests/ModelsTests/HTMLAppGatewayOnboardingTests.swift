@@ -215,6 +215,52 @@ final class HTMLAppGatewayOnboardingTests: XCTestCase {
         wait(for: [expectation], timeout: 1)
     }
 
+    func testRejectedCatalogStillExposesUntrustedStartURLForWebFallback() throws {
+        let storage = MemoryStorage()
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let otherKey = Curve25519.Signing.PrivateKey()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        // Signed by a key the gateway does not trust: validation must fail.
+        let signedByStranger = manifest(signature: HTMLAppManifestSignature(
+            algorithm: "ed25519",
+            keyID: "gateway-key",
+            value: try otherKey.signature(for: encoder.encode(manifest())).base64URLEncodedString()
+        ))
+        let gateway = HTMLAppGatewayConfiguration(
+            name: "Production",
+            baseURL: "https://gateway.example.com",
+            publicKeyID: "gateway-key",
+            publicKey: privateKey.publicKey.rawRepresentation.base64URLEncodedString()
+        )
+        let transport = Transport()
+        transport.responses["https://gateway.example.com/health"] = .success(response(validHealth, finalURL: "https://gateway.example.com/health"))
+        transport.responses["https://gateway.example.com/manifest"] = .success(response(try encoder.encode(signedByStranger), finalURL: "https://gateway.example.com/manifest"))
+        let service = HTMLAppGatewayOnboardingService(
+            gatewayRegistry: HTMLAppGatewayRegistry(storage: storage),
+            trustRegistry: HTMLAppTrustRegistry(storage: storage),
+            permissionLedger: HTMLAppPermissionLedger(storage: storage),
+            transport: transport
+        )
+        XCTAssertEqual(service.untrustedStartURL(appID: "com.example.gateway-app"), nil, "nothing is exposed before a fetch")
+        let expectation = expectation(description: "signature rejected")
+
+        service.validate(gateway) { result in
+            switch result {
+            case .success: XCTFail("A catalog signed by another key must be rejected")
+            case .failure(let error):
+                XCTAssertEqual(error as? HTMLAppGatewayOnboardingError, .signatureVerificationFailed("com.example.gateway-app"))
+            }
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
+
+        // The decoded-but-unverified document is still available so the host
+        // can offer to open the start URL as a plain web page.
+        XCTAssertEqual(service.untrustedStartURL(appID: "com.example.gateway-app"), "https://apps.example.com/index.html")
+        XCTAssertNil(service.untrustedStartURL(appID: "com.example.missing"))
+    }
+
     func testProductionValidationRejectsDrelOfflineTampering() throws {
         let storage = MemoryStorage()
         let privateKey = Curve25519.Signing.PrivateKey()

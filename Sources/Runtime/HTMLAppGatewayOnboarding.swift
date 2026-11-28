@@ -122,6 +122,29 @@ public enum HTMLAppGatewayOnboardingError: Error, Equatable, LocalizedError {
 }
 
 public final class HTMLAppGatewayOnboardingService {
+    /// Manifests decoded from the most recent catalog fetch, before signature
+    /// verification. They are *untrusted*: nothing here may grant native
+    /// capabilities. The host uses them only to offer a plain-web fallback
+    /// ("open the start URL in a normal browser") when the catalog is rejected.
+    private let untrustedLock = NSLock()
+    private var _lastUntrustedManifests: [HTMLAppManifest] = []
+    public var lastUntrustedManifests: [HTMLAppManifest] {
+        untrustedLock.lock(); defer { untrustedLock.unlock() }
+        return _lastUntrustedManifests
+    }
+
+    /// The decoded-but-unverified start URL for one app, if the last catalog
+    /// fetch contained it. Only ever use this to open a normal web page.
+    public func untrustedStartURL(appID: String) -> String? {
+        untrustedLock.lock(); defer { untrustedLock.unlock() }
+        return _lastUntrustedManifests.first { $0.appID == appID }?.startURL
+    }
+
+    private func recordUntrustedManifests(_ manifests: [HTMLAppManifest]) {
+        untrustedLock.lock(); defer { untrustedLock.unlock() }
+        _lastUntrustedManifests = manifests
+    }
+
     private struct ManifestEnvelope: Decodable {
         let manifests: [HTMLAppManifest]
     }
@@ -156,6 +179,10 @@ public final class HTMLAppGatewayOnboardingService {
         _ gateway: HTMLAppGatewayConfiguration,
         completion: @escaping (Result<HTMLAppGatewayValidationReport, Error>) -> Void
     ) {
+        // A new validation must never leave the previous catalog's untrusted
+        // documents behind: if this fetch fails before decoding, the host
+        // should see "no fallback address", not the last good catalog.
+        recordUntrustedManifests([])
         guard gateway.validate(allowsDevelopmentHTTP: allowsDevelopmentMode).isValid,
               let healthURL = gateway.healthURL,
               let manifestURL = gateway.manifestURL else {
@@ -290,6 +317,7 @@ public final class HTMLAppGatewayOnboardingService {
             case .success(let response):
                 do {
                     let manifests = try self.decodeManifests(response.data)
+                    self.recordUntrustedManifests(manifests)
                     try manifests.forEach { try self.validateTrust(of: $0, gateway: gateway) }
                     self.validateBoundWebManifests(manifests, at: 0, resolved: [:]) { result in
                         completion(result.map { (manifests, $0) })
